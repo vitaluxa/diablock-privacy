@@ -1,0 +1,17 @@
+{
+  "appId": "com.diablock.game",
+  "appName": "Dia Block",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "buildOptions": {
+      "keystorePath": "",
+      "keystoreAlias": "",
+      "keystoreAliasPassword": "",
+      "keystorePassword": "",
+      "releaseType": "AAB"
+    }
+  }
+}
