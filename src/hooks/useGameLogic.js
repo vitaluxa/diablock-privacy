@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { LevelGenerator } from '../services/levelGenerator';
 import { soundEffectsService } from '../services/soundEffectsService';
+import { hapticsService } from '../services/hapticsService';
 import { debugControls } from '../utils/debugControls';
 import { debugService } from '../services/debugService';
 
@@ -22,6 +23,7 @@ export function useGameLogic(firebaseHook = null) {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [globalScore, setGlobalScore] = useState(0);
   const [currentLevelScore, setCurrentLevelScore] = useState(0);
+  const [levelScores, setLevelScores] = useState({}); // Map of level -> best score
 
   // Level pre-generation cache
   const levelCacheRef = useRef(new Map()); // Map of levelNumber -> blocks array
@@ -91,7 +93,6 @@ export function useGameLogic(firebaseHook = null) {
     }
 
     loadGameState();
-    loadGameState();
   }, [firebaseHook.isInitialized, firebaseHook.loadGameState]); // Only depend on initialization and load function
 
   // Track if we've saved for current win to prevent double saves
@@ -104,15 +105,26 @@ export function useGameLogic(firebaseHook = null) {
   // Track if we're currently saving to prevent multiple simultaneous saves
   const isSavingRef = useRef(false);
   
-  // Load played hashes from localStorage on mount
+  // Load played hashes and level scores from localStorage on mount
   useEffect(() => {
     try {
+      // Load level scores
+      const savedLevelScores = localStorage.getItem('diaBlockLevelScores');
+      if (savedLevelScores) {
+        try {
+          setLevelScores(JSON.parse(savedLevelScores));
+        } catch (e) {
+          console.error('Failed to parse saved level scores', e);
+        }
+      }
+
+      // Load played levels hash set
       const savedHashes = localStorage.getItem('diaBlockPlayedHashes');
       if (savedHashes) {
         setPlayedLevelHashes(new Set(JSON.parse(savedHashes)));
       }
     } catch (e) {
-      console.error('Failed to load played hashes:', e);
+      console.error('Failed to load played hashes or level scores:', e);
     }
   }, []);
 
@@ -431,7 +443,7 @@ export function useGameLogic(firebaseHook = null) {
     } finally {
       setIsLoading(false);
     }
-  }, [levelNumber, pregenerateNextLevel]);
+  }, [levelNumber, pregenerateNextLevel, playedLevelHashes]);
 
   // Pre-generate next level when current level is loaded and user starts playing
   useEffect(() => {
@@ -477,6 +489,10 @@ export function useGameLogic(firebaseHook = null) {
           movePenalty
         });
         
+        // Play win sound
+        soundEffectsService.playLevelWin().catch(() => {});
+        hapticsService.success();
+        
         // Add current level hash to played set
         const generator = new LevelGenerator();
         const currentHash = generator.getLevelHash(blocks);
@@ -489,6 +505,18 @@ export function useGameLogic(firebaseHook = null) {
         }
         
         setCurrentLevelScore(levelScore);
+        
+        // Update best score for this level if improved
+        setLevelScores(prev => {
+          const currentBest = prev[levelNumber] || 0;
+          if (levelScore > currentBest) {
+            const newScores = { ...prev, [levelNumber]: levelScore };
+            localStorage.setItem('diaBlockLevelScores', JSON.stringify(newScores));
+            return newScores;
+          }
+          return prev;
+        });
+
         setGlobalScore(prev => {
           const newScore = Math.max(0, prev + levelScore); // Ensure global score >= 0
           try {
@@ -597,6 +625,7 @@ export function useGameLogic(firebaseHook = null) {
 
     // Play subtle click sound when grabbing block
     soundEffectsService.playBlockClick().catch(() => {});
+    hapticsService.lightImpact();
 
     // Log drag start
     debugService.logUserAction('drag_start', {
@@ -685,12 +714,13 @@ export function useGameLogic(firebaseHook = null) {
     }
 
     if (canMove && (newRow !== block.row || newCol !== block.col)) {
-      // Play sliding sound when block moves to a new cell (throttled)
+      // Play sliding sound and vibration when block moves to a new cell (throttled)
       const now = Date.now();
       const lastPos = lastBlockPositionRef.current;
       if (lastPos.row !== newRow || lastPos.col !== newCol) {
         if (now - soundThrottleRef.current > 50) { // Throttle to max once per 50ms for smoother sound
           soundEffectsService.playBlockSlide().catch(() => {});
+          hapticsService.lightImpact(); // Short vibration when block moves
           soundThrottleRef.current = now;
           lastBlockPositionRef.current = { row: newRow, col: newCol };
         }
@@ -745,6 +775,7 @@ export function useGameLogic(firebaseHook = null) {
         setMoves(prev => prev + 1);
         // Play move confirmation sound
         soundEffectsService.playBlockMove().catch(() => {});
+        hapticsService.mediumImpact();
       }
     }
     
@@ -758,17 +789,31 @@ export function useGameLogic(firebaseHook = null) {
 
   // Next level handler
   const nextLevel = useCallback((targetLevel = null) => {
-    if (targetLevel !== null) {
-      setLevelNumber(targetLevel);
-    } else {
-      setLevelNumber(prev => prev + 1);
-    }
+    const newLevel = targetLevel !== null ? targetLevel : levelNumber + 1;
+    setLevelNumber(newLevel);
     setIsWon(false);
     setMoves(0);
     setStartTime(null);
     setElapsedTime(0);
     setCurrentLevelScore(0);
-  }, []);
+    // Generate the new level
+    generateLevel(false, newLevel);
+  }, [levelNumber, generateLevel]);
+
+  const resetLevel = useCallback(() => {
+    // Re-generate the current level
+    generateLevel(false, levelNumber);
+  }, [generateLevel, levelNumber]);
+
+  const setLevel = useCallback((lvl) => {
+    setLevelNumber(lvl);
+    setIsWon(false);
+    setMoves(0);
+    setElapsedTime(0);
+    setBlocks([]); // Will trigger loadLevel via useEffect if blocks.length changes
+    // Directly call generateLevel to load the specified level
+    generateLevel(false, lvl);
+  }, [generateLevel]);
 
   const [cellSize, setCellSize] = useState(CELL_SIZE);
 
@@ -860,8 +905,12 @@ export function useGameLogic(firebaseHook = null) {
     draggingBlock,
     globalScore,
     currentLevelScore,
+    levelScores,
+    bestLevelScore: levelScores[levelNumber] || 0,
     generateLevel,
     nextLevel,
+    resetLevel,
+    setLevel,
     handleDragStart,
     handleDragMove,
     handleDragEnd,

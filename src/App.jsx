@@ -8,11 +8,29 @@ import { LoadingOverlay } from './components/LoadingOverlay';
 import { MainMenu } from './components/MainMenu';
 import { Instructions } from './components/Instructions';
 import { PromotionOverlay } from './components/PromotionOverlay';
+import { TermsOverlay } from './components/TermsOverlay';
+import { LevelSelectModal } from './components/LevelSelectModal'; // Added
 import ErrorBoundary from './components/ErrorBoundary';
 import { useGameLogic } from './hooks/useGameLogic';
 import { useFirebase } from './hooks/useFirebase';
 import { useBackgroundMusic } from './hooks/useBackgroundMusic';
 import { adService } from './services/adService';
+import { billingService } from './services/billingService';
+import { soundEffectsService } from './services/soundEffectsService';
+import {
+  Settings,
+  RotateCcw,
+  Trophy,
+  Menu,
+  X,
+  Volume2,
+  VolumeX,
+  Music,
+  Music2,
+  ArrowRight,
+  Grid,
+  Star
+} from 'lucide-react'; // Added
 
 function App() {
   const [showWinModal, setShowWinModal] = useState(false);
@@ -21,6 +39,9 @@ function App() {
   const [showInstructions, setShowInstructions] = useState(false);
   const [showDebugPanel, setShowDebugPanel] = useState(false);
   const [showPromotion, setShowPromotion] = useState(true); // Show promotion on start
+  const [showTerms, setShowTerms] = useState(false); // Show terms overlay
+  const [showLevelSelect, setShowLevelSelect] = useState(false); // Added
+  const [soundEffectsMuted, setSoundEffectsMuted] = useState(false);
 
   // Initialize Firebase (anonymous authentication)
   const firebaseHook = useFirebase();
@@ -28,9 +49,12 @@ function App() {
   // Initialize background music
   const musicHook = useBackgroundMusic();
 
-  // Initialize Ads
+  // Initialize Ads and Sound Effects
   useEffect(() => {
     adService.init();
+    soundEffectsService.loadSettings();
+    soundEffectsService.initializeAudioContext();
+    setSoundEffectsMuted(soundEffectsService.getMuted());
   }, []);
 
   const {
@@ -43,8 +67,12 @@ function App() {
     draggingBlock,
     globalScore,
     currentLevelScore,
+    levelScores,
+    bestLevelScore,
     generateLevel,
     nextLevel,
+    resetLevel,
+    setLevel,
     handleDragStart,
     handleDragMove,
     handleDragEnd,
@@ -66,12 +94,23 @@ function App() {
   const handleNextLevel = async () => {
     setShowWinModal(false);
     
-    // Try to show interstitial ad before next level
-    await adService.showInterstitial();
+    // Call ad service to check if interstitial should be shown
+    // This uses the new 5-10 level random frequency logic
+    await adService.onLevelCompleted();
 
     // Don't add +1 here because nextLevelRef.current already has the correct next level
     // from the win save logic (it was set to levelNumber + 1 when the level was won)
-    generateLevel(false, levelNumber, levelNumber);
+    nextLevel(); // Changed from generateLevel(false, levelNumber, levelNumber);
+  };
+
+  const handleReplayLevel = () => { // Added
+    setShowWinModal(false);
+    resetLevel();
+  };
+
+  const handleSelectLevel = (level) => { // Added
+    setLevel(level);
+    setShowLevelSelect(false);
   };
 
   const handleStartOver = () => {
@@ -80,11 +119,23 @@ function App() {
     generateLevel(false, levelNumber, levelNumber);
   };
 
-  const handlePurchaseNoAds = () => {
-    if (window.confirm('Purchase "No Ads" version for $2.99? (Mock)')) {
-      adService.purchaseNoAds();
+  const handlePurchaseNoAds = async () => {
+    const result = await billingService.purchaseNoAds();
+    
+    if (result.success) {
+      // Remove ads from UI
+      await adService.removeAds();
       alert('Thank you! Ads have been removed.');
+    } else {
+      if (result.error && result.error !== 'User cancelled') {
+        alert('Purchase failed: ' + result.error);
+      }
     }
+  };
+
+  const handleToggleSoundEffects = () => {
+    const newMutedState = soundEffectsService.toggleMute();
+    setSoundEffectsMuted(newMutedState);
   };
 
   const cellSize = getCellSize();
@@ -113,7 +164,13 @@ function App() {
     <ErrorBoundary>
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 text-white pb-16">
         {showPromotion && (
-          <PromotionOverlay onClose={() => setShowPromotion(false)} />
+          <PromotionOverlay 
+            onClose={() => setShowPromotion(false)} 
+            onShowTerms={() => setShowTerms(true)}
+          />
+        )}
+        {showTerms && (
+          <TermsOverlay onClose={() => setShowTerms(false)} />
         )}
 
         <div className="container mx-auto px-2 md:px-4 py-4 md:py-8">
@@ -172,6 +229,15 @@ function App() {
                 title={musicHook.isMuted ? 'Unmute Music' : 'Mute Music'}
               >
                 {musicHook.isMuted ? '🔇' : '🔊'}
+              </button>
+              
+              {/* Sound Effects Toggle Button */}
+              <button
+                onClick={handleToggleSoundEffects}
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                title={soundEffectsMuted ? 'Unmute Sound Effects' : 'Mute Sound Effects'}
+              >
+                {soundEffectsMuted ? '🔕' : '🔔'}
               </button>
               <button
                 onClick={handleStartOver}
@@ -261,8 +327,10 @@ function App() {
           elapsedTime={elapsedTime}
           levelNumber={levelNumber}
           currentLevelScore={currentLevelScore}
+          bestLevelScore={bestLevelScore}
           globalScore={globalScore}
           onNextLevel={handleNextLevel}
+          onReplay={handleReplayLevel}
           onClose={() => {
             setShowWinModal(false);
             setShowMainMenu(true);

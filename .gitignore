@@ -27,6 +27,12 @@ dist-ssr
 .env
 .env.local
 
+# Android keystore files (DO NOT COMMIT!)
+android/keystore.properties
+android/app/release.keystore
+android/app/*.keystore
+
+
 
 
 

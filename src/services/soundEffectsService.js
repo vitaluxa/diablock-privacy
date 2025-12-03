@@ -88,38 +88,31 @@ class SoundEffectsService {
   /**
    * Play block slide sound - subtle sliding/click sound
    */
+  /**
+   * Play block slide sound - friction sound
+   */
   async playBlockSlide() {
     await this.resumeAudioContext();
     
-    // Create a gentle slide sound with two tones
-    // Lower tone for the "whoosh" effect
-    const baseFreq = 200 + Math.random() * 50; // 200-250 Hz
-    this.createSound(baseFreq, 0.08, 'sawtooth', 0.08);
-    
-    // Higher tone for the "click" effect
-    setTimeout(() => {
-      const clickFreq = 600 + Math.random() * 100; // 600-700 Hz
-      this.createSound(clickFreq, 0.05, 'square', 0.06);
-    }, 20);
+    // Lower pitch sawtooth for "grinding/sliding" feel (friction)
+    const baseFreq = 100 + Math.random() * 20; // 100-120 Hz
+    this.createSound(baseFreq, 0.05, 'sawtooth', 0.05);
   }
 
   /**
-   * Play block move sound - when block successfully moves to new position
+   * Play block move sound - "thud/click" when settling
    */
   async playBlockMove() {
     await this.resumeAudioContext();
     
-    // Play a subtle two-tone chime
-    const freq1 = 400 + Math.random() * 30; // 400-430 Hz
-    const freq2 = 600 + Math.random() * 40; // 600-640 Hz
+    // "Thud" sound - low frequency square/triangle for impact
+    const freq1 = 80 + Math.random() * 10; 
+    this.createSound(freq1, 0.08, 'square', 0.1);
     
-    // First tone
-    this.createSound(freq1, 0.1, 'square', 0.09);
-    
-    // Second tone slightly after (harmonious interval)
+    // Subtle high click for definition (snap into place)
     setTimeout(() => {
-      this.createSound(freq2, 0.08, 'triangle', 0.07);
-    }, 30);
+       this.createSound(400, 0.03, 'triangle', 0.05);
+    }, 5);
   }
 
   /**
@@ -128,9 +121,39 @@ class SoundEffectsService {
   async playBlockClick() {
     await this.resumeAudioContext();
     
-    // Very subtle click/pickup sound
-    const freq = 350 + Math.random() * 50; // 350-400 Hz
-    this.createSound(freq, 0.04, 'square', 0.05);
+    // Short, crisp click
+    const freq = 600 + Math.random() * 50;
+    this.createSound(freq, 0.03, 'triangle', 0.05);
+  }
+
+  /**
+   * Play level win sound - fanfare
+   */
+  async playLevelWin() {
+    await this.resumeAudioContext();
+    
+    // Bright, ascending major arpeggio (C Major)
+    const notes = [
+      523.25, // C5
+      659.25, // E5
+      783.99, // G5
+      1046.50 // C6
+    ];
+    
+    // Play arpeggio
+    notes.forEach((freq, index) => {
+      setTimeout(() => {
+        // Layer square and triangle for a retro-console coin/win sound
+        this.createSound(freq, 0.15, 'square', 0.08);
+        this.createSound(freq, 0.2, 'triangle', 0.08); 
+      }, index * 80);
+    });
+    
+    // Final flourish/chord
+    setTimeout(() => {
+       this.createSound(523.25, 0.4, 'sawtooth', 0.05); // Root
+       this.createSound(1046.50, 0.4, 'square', 0.05); // Octave
+    }, 350);
   }
 
   /**
@@ -220,6 +243,7 @@ class SoundEffectsService {
 
 // Export singleton instance
 export const soundEffectsService = new SoundEffectsService();
+
 
 
 

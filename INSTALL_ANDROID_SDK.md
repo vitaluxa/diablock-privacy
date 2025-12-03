@@ -78,3 +78,4 @@ Copy-Item "android\app\build\outputs\apk\debug\app-debug.apk" -Destination "apk\
 
 
 
+

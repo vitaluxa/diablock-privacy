@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 export function Scoreboard({ globalScore, currentLevelScore, levelNumber, isOpen, onClose, firebaseHook }) {
   const [highScores, setHighScores] = useState([]);
   const [isLoadingScores, setIsLoadingScores] = useState(false);
+  const [userRank, setUserRank] = useState(null);
 
   useEffect(() => {
     async function loadScores() {
@@ -50,17 +51,117 @@ export function Scoreboard({ globalScore, currentLevelScore, levelNumber, isOpen
       if (firebaseHook && firebaseHook.isInitialized) {
         try {
           const leaderboardScores = await firebaseHook.getLeaderboard(10);
+          
+          // Initialize test users for display
+          // Scores adjusted to be consistent with the high outlier (CalmElite8729: Lvl 92, 4.2M)
+          // Scaling approx 45k-50k per level for top players to make it logical
+          const testUsers = [
+            { name: 'MasterPlayer', score: 6500000, level: 131 },
+            { name: 'SwiftSolver', score: 4800000, level: 99 },
+            { name: 'PuzzlePro', score: 3500000, level: 85 },
+            { name: 'BlockBuster', score: 2500000, level: 72 },
+            { name: 'BoldKing5318', score: 709425, level: 53 }, // User's reference score (keeping as is)
+            { name: 'QuickMind', score: 600000, level: 45 },
+            { name: 'SmartMove', score: 380000, level: 28 },
+            { name: 'NewPlayer', score: 200000, level: 15 },
+            { name: 'CubeMaster', score: 100000, level: 8 },
+            { name: 'LogicKing', score: 65000, level: 5 },
+            { name: 'BrainTeaser', score: 40000, level: 3 },
+            { name: 'SpeedRunner', score: 25000, level: 2 },
+          ];
+
+          const formattedTestUsers = testUsers.map(user => {
+            // Add some randomness to make it look more real
+            // Random variance of +/- 5% for score
+            const scoreVariance = Math.floor(user.score * 0.05);
+            const randomScore = user.score + Math.floor(Math.random() * scoreVariance * 2) - scoreVariance;
+            
+            // Random variance of +/- 1 for level (but keep >= 1)
+            const levelVariance = Math.random() > 0.5 ? 1 : 0;
+            const randomLevel = Math.max(1, user.level + (Math.random() > 0.5 ? levelVariance : -levelVariance));
+
+            return {
+              name: user.name,
+              score: randomScore,
+              level: randomLevel,
+              date: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000)).toISOString() // Random date in last week
+            };
+          });
+
+          let finalScores = [];
+
           if (leaderboardScores && leaderboardScores.length > 0) {
-            const formattedScores = leaderboardScores.map((entry) => ({
+            const formattedRealScores = leaderboardScores.map((entry) => ({
               name: entry.username || entry.name || 'Anonymous',
               score: entry.score || 0,
               level: entry.level || 1,
-              date: entry.timestamp ? (entry.timestamp instanceof Date ? entry.timestamp.toISOString() : new Date(entry.timestamp).toISOString()) : new Date().toISOString()
+              date: entry.timestamp ? (entry.timestamp instanceof Date ? entry.timestamp.toISOString() : new Date(entry.timestamp).toISOString()) : new Date().toISOString(),
+              isReal: true // Mark as real user
             }));
-            setHighScores(formattedScores.sort((a, b) => b.score - a.score));
-            setIsLoadingScores(false);
-            return;
+            
+            // Combine real and test scores (User wants bots to be visible/on top if they have high scores)
+            finalScores = [...formattedRealScores, ...formattedTestUsers];
+          } else {
+            finalScores = formattedTestUsers;
           }
+
+          // ALWAYS add the current user's local score to ensure they see themselves
+          // This fixes the issue where the user doesn't see their own score if Firebase hasn't synced yet
+          if (firebaseHook && firebaseHook.userName) {
+            finalScores.push({
+              name: firebaseHook.userName,
+              score: globalScore,
+              level: levelNumber,
+              date: new Date().toISOString(),
+              isReal: true,
+              isCurrentUser: true
+            });
+          }
+
+          // Deduplicate by name (prefer real users and higher scores)
+          const uniqueScores = {};
+          finalScores.forEach(entry => {
+            // If we have a current user entry, prioritize it over others with same name
+            if (entry.isCurrentUser) {
+               uniqueScores[entry.name] = entry;
+               return;
+            }
+
+            if (!uniqueScores[entry.name] || entry.score > uniqueScores[entry.name].score || (entry.isReal && !uniqueScores[entry.name].isReal)) {
+              // Don't overwrite if existing is current user
+              if (uniqueScores[entry.name] && uniqueScores[entry.name].isCurrentUser) return;
+              uniqueScores[entry.name] = entry;
+            }
+          });
+
+          // Sort all scores
+          const sortedScores = Object.values(uniqueScores).sort((a, b) => b.score - a.score);
+          
+          // Find user rank
+          let rank = sortedScores.findIndex(entry => entry.isCurrentUser) + 1;
+          
+          // Logic for rank display:
+          // 1. If score is 0, rank is 0
+          if (globalScore === 0) {
+            rank = 0;
+          }
+          // 2. If rank > 20, multiply by 111 to simulate large player base
+          else if (rank > 20) {
+            rank = rank * 111;
+          }
+          // 3. User specifically asked for 13*111 example, so maybe they want it for anything outside top 10?
+          // Let's stick to their "lower than top 20" (rank > 20) request first, but if they meant "outside top 10", 
+          // we might need to adjust. The example "13*111" implies they want it even for rank 13.
+          // Let's apply it for rank > 10 to be safe and match the "illusion" goal.
+          else if (rank > 10) {
+             rank = rank * 111;
+          }
+
+          setUserRank(rank);
+
+          setHighScores(sortedScores.slice(0, 10));
+          setIsLoadingScores(false);
+          return;
         } catch (error) {
           console.error('Failed to load leaderboard scores:', error);
         }
@@ -204,7 +305,19 @@ export function Scoreboard({ globalScore, currentLevelScore, levelNumber, isOpen
 
           <div className="bg-gray-900 rounded-lg p-4">
             <div className="text-gray-400 text-sm mb-1">Current Level</div>
-            <div className="text-xl font-bold text-yellow-400">Level {levelNumber}</div>
+            <div className="flex justify-between items-end">
+              <div className="text-xl font-bold text-yellow-400">Level {levelNumber}</div>
+              {userRank !== null && userRank !== 0 && userRank > 10 && (
+                <div className="text-sm text-gray-400">
+                  Rank: <span className="text-white font-bold">#{userRank.toLocaleString()}</span>
+                </div>
+              )}
+              {userRank === 0 && (
+                 <div className="text-sm text-gray-400">
+                  Rank: <span className="text-gray-500">-</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -224,7 +337,11 @@ export function Scoreboard({ globalScore, currentLevelScore, levelNumber, isOpen
               {highScores.map((entry, index) => (
                 <div
                   key={index}
-                  className="flex justify-between items-center bg-gray-900 rounded-lg p-3"
+                  className={`flex justify-between items-center rounded-lg p-3 ${
+                    entry.isCurrentUser 
+                      ? 'bg-blue-900/40 border border-blue-500/50' 
+                      : 'bg-gray-900'
+                  }`}
                 >
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold ${

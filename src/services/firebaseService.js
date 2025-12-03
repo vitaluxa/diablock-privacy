@@ -64,6 +64,10 @@ class FirebaseService {
               await this.createUserProfile();
               this.isInitialized = true;
               debugService.logEvent('user_auth', { method: 'anonymous', userId: userCredential.user.uid });
+              
+              // Seed leaderboard if empty (only once per session/check)
+              this.checkAndSeedLeaderboard();
+              
               resolve(true);
             } catch (error) {
               console.error('Failed to sign in anonymously:', error);
@@ -516,6 +520,76 @@ class FirebaseService {
    */
   getUserId() {
     return this.user?.uid || localStorage.getItem('firebaseUserId') || null;
+  }
+  /**
+   * Check and seed leaderboard with fake users if empty
+   */
+  async checkAndSeedLeaderboard() {
+    if (!this.db) return;
+
+    try {
+      // Check if leaderboard has any entries
+      const leaderboardRef = collection(this.db, 'leaderboard');
+      const q = query(leaderboardRef, limit(1));
+      const snapshot = await getDocs(q);
+
+      if (snapshot.empty) {
+        console.log('🌱 Seeding leaderboard with initial players...');
+        await this.seedLeaderboard();
+      }
+    } catch (error) {
+      console.error('Failed to check/seed leaderboard:', error);
+    }
+  }
+
+  /**
+   * Seed leaderboard with mock data
+   */
+  async seedLeaderboard() {
+    // Scores adjusted to be consistent with the high outlier (CalmElite8729: Lvl 92, 4.2M)
+    // Scaling approx 45k-50k per level for top players to make it logical
+    const mockUsers = [
+      { name: 'MasterPlayer', score: 6500000, level: 131 },
+      { name: 'SwiftSolver', score: 4800000, level: 99 },
+      { name: 'PuzzlePro', score: 3500000, level: 85 },
+      { name: 'BlockBuster', score: 2500000, level: 72 },
+      { name: 'BoldKing5318', score: 709425, level: 53 }, // User's reference score
+      { name: 'QuickMind', score: 600000, level: 45 },
+      { name: 'SmartMove', score: 380000, level: 28 },
+      { name: 'NewPlayer', score: 200000, level: 15 },
+      { name: 'CubeMaster', score: 100000, level: 8 },
+      { name: 'LogicKing', score: 65000, level: 5 },
+      { name: 'BrainTeaser', score: 40000, level: 3 },
+      { name: 'SpeedRunner', score: 25000, level: 2 },
+    ];
+
+    const batchPromises = mockUsers.map(async (user, index) => {
+      // Create a fake user ID
+      const fakeUserId = `bot_${Date.now()}_${index}`;
+      
+      // Add to leaderboard
+      await setDoc(doc(this.db, 'leaderboard', `${fakeUserId}_${Date.now()}`), {
+        userId: fakeUserId,
+        username: user.name,
+        name: user.name,
+        score: user.score,
+        level: user.level,
+        timestamp: new Date(Date.now() - Math.floor(Math.random() * 7 * 24 * 60 * 60 * 1000)), // Random date in last week
+        isBot: true
+      });
+
+      // Create user profile for them too (optional but good for consistency)
+      await setDoc(doc(this.db, 'users', fakeUserId), {
+        username: user.name,
+        globalScore: user.score,
+        level: user.level,
+        lastPlayed: new Date(),
+        isBot: true
+      });
+    });
+
+    await Promise.all(batchPromises);
+    console.log('✅ Leaderboard seeded successfully');
   }
 }
 

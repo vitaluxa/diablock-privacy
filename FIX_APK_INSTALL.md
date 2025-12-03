@@ -89,3 +89,4 @@ If that doesn't work, use **ADB install** (Solution 2) - it's the most reliable 
 
 
 
+
