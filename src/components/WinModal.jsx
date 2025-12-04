@@ -1,8 +1,8 @@
 import React from 'react';
 
-import { RotateCcw, Star } from 'lucide-react';
+import { RotateCcw, Star, CheckCircle2 } from 'lucide-react';
 
-export function WinModal({ isOpen, moves, elapsedTime, levelNumber, currentLevelScore, bestLevelScore, globalScore, onNextLevel, onReplay, onClose }) {
+export function WinModal({ isOpen, moves, elapsedTime, levelNumber, currentLevelScore, bestLevelScore, optimalMoves, optimalScore, globalScore, onNextLevel, onReplay, onClose }) {
   if (!isOpen) return null;
 
   const formatTime = (seconds) => {
@@ -41,22 +41,62 @@ export function WinModal({ isOpen, moves, elapsedTime, levelNumber, currentLevel
           </div>
           <div className="flex justify-between items-center bg-gray-900 rounded-lg p-2 md:p-3">
             <span className="text-gray-400 text-sm md:text-base">Moves</span>
-            <span className="text-white font-bold text-sm md:text-base">{moves}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-bold text-sm md:text-base">{moves}</span>
+              {optimalMoves && (
+                moves === optimalMoves ? (
+                  <CheckCircle2 size={16} className="text-green-400" title="Perfect! You matched the optimal moves!" />
+                ) : (
+                  <span className="text-gray-500 text-xs">({moves - optimalMoves > 0 ? `+${moves - optimalMoves}` : `${moves - optimalMoves}`} from optimal)</span>
+                )
+              )}
+            </div>
           </div>
+          
+          {optimalMoves && (
+            <div className="flex justify-between items-center bg-gray-900 rounded-lg p-2 md:p-3">
+              <span className="text-gray-400 text-sm md:text-base flex items-center gap-1">
+                <Star size={14} className="text-purple-400" />
+                Optimal Moves
+              </span>
+              <span className="text-purple-400 font-bold text-lg md:text-xl">{optimalMoves}</span>
+            </div>
+          )}
+
           <div className="flex justify-between items-center bg-gray-900 rounded-lg p-2 md:p-3">
             <span className="text-gray-400 text-sm md:text-base">Level Score</span>
-            <span className="text-green-400 font-bold text-lg md:text-xl">{currentLevelScore.toLocaleString()}</span>
+            <span className="text-green-400 font-bold text-lg md:text-xl">
+              {typeof currentLevelScore === 'number' ? (currentLevelScore.toLocaleString?.() || currentLevelScore.toString()) : '0'}
+            </span>
           </div>
+          
           <div className="flex justify-between items-center bg-gray-900 rounded-lg p-2 md:p-3">
             <span className="text-gray-400 text-sm md:text-base flex items-center gap-1">
               <Star size={14} className="text-yellow-400" />
-              Best Score
+              Your Best
             </span>
-            <span className="text-yellow-400 font-bold text-lg md:text-xl">{bestLevelScore.toLocaleString()}</span>
+            <span className="text-yellow-400 font-bold text-lg md:text-xl">
+              {typeof bestLevelScore === 'number' ? (bestLevelScore.toLocaleString?.() || bestLevelScore.toString()) : '0'}
+            </span>
           </div>
+
+          {optimalScore && (
+            <div className="flex justify-between items-center bg-gray-900 rounded-lg p-2 md:p-3">
+              <span className="text-gray-400 text-sm md:text-base flex items-center gap-1">
+                <Star size={14} className="text-purple-400" />
+                Optimal Score
+              </span>
+              <span className="text-purple-400 font-bold text-lg md:text-xl">
+                {typeof optimalScore === 'number' ? (optimalScore.toLocaleString?.() || optimalScore.toString()) : '0'}
+              </span>
+            </div>
+          )}
+
           <div className="flex justify-between items-center bg-gray-900 rounded-lg p-2 md:p-3">
             <span className="text-gray-400 text-sm md:text-base">Global Score</span>
-            <span className="text-blue-400 font-bold text-lg md:text-xl">{globalScore.toLocaleString()}</span>
+            <span className="text-blue-400 font-bold text-lg md:text-xl">
+              {typeof globalScore === 'number' ? (globalScore.toLocaleString?.() || globalScore.toString()) : '0'}
+            </span>
           </div>
         </div>
 

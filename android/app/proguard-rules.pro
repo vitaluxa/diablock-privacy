@@ -51,3 +51,82 @@
 # Keep Google Play Services (if used)
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.android.gms.**
+
+# Keep AdMob classes
+-keep class com.getcapacitor.community.admob.** { *; }
+-keep class com.google.android.gms.ads.** { *; }
+-dontwarn com.google.android.gms.ads.**
+-dontwarn com.getcapacitor.community.admob.**
+
+# Keep JavaScript interfaces for WebView
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
+# Keep React and JavaScript bridge classes
+-keep class com.facebook.react.** { *; }
+-keep class org.apache.cordova.** { *; }
+
+# Keep all JavaScript interface methods
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface *;
+}
+
+# ===== CRITICAL CAPACITOR BRIDGE CLASSES =====
+# Keep all Capacitor WebView bridge classes (prevents crash on startup)
+-keep class com.getcapacitor.Bridge { *; }
+-keep class com.getcapacitor.BridgeActivity { *; }
+-keep class com.getcapacitor.PluginManager { *; }
+-keep class com.getcapacitor.JSObject { *; }
+-keep class com.getcapacitor.PluginCall { *; }
+
+# Keep all plugin methods (critical for JavaScript bridge)
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    @com.getcapacitor.PluginMethod *;
+    @com.getcapacitor.annotation.PluginMethod *;
+    public <methods>;
+}
+
+# Keep Capacitor plugin annotations
+-keepattributes *Annotation*
+-keepattributes Signature
+-keepattributes InnerClasses
+-keepattributes EnclosingMethod
+-keepattributes Exceptions
+
+# ===== FIREBASE ANALYTICS =====
+# Keep Firebase Analytics classes
+-keep class com.google.firebase.analytics.** { *; }
+-keep class com.google.android.gms.measurement.** { *; }
+-keep class com.google.firebase.installations.** { *; }
+-keep class com.google.firebase.components.** { *; }
+
+# ===== ADMOB =====
+# Keep AdMob classes
+-keep public class com.google.android.gms.ads.** {
+   public *;
+}
+-keep public class com.google.ads.** {
+   public *;
+}
+-keep class com.google.android.gms.ads.identifier.** { *; }
+
+# ===== GENERAL ANDROID =====
+# Keep all enum classes
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+
+# Keep R classes
+-keepclassmembers class **.R$* {
+    public static <fields>;
+}
+
+# Keep Activity and Fragment constructors
+-keepclassmembers class * extends android.app.Activity {
+   public void *(android.view.View);
+}
+-keepclassmembers class * extends androidx.fragment.app.Fragment {
+   public void *(android.view.View);
+}

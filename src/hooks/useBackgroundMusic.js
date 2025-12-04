@@ -7,7 +7,7 @@ import { musicService } from '../services/musicService';
 export function useBackgroundMusic() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolumeState] = useState(0.5);
+  const [volume, setVolumeState] = useState(0.4); // Reduced from 0.5 to 0.4
 
   // Initialize music service on mount
   useEffect(() => {

@@ -24,6 +24,9 @@ export function useGameLogic(firebaseHook = null) {
   const [globalScore, setGlobalScore] = useState(0);
   const [currentLevelScore, setCurrentLevelScore] = useState(0);
   const [levelScores, setLevelScores] = useState({}); // Map of level -> best score
+  const [levelBestMoves, setLevelBestMoves] = useState({}); // Map of level -> best moves
+  const [levelBestScores, setLevelBestScores] = useState({}); // Map of level -> best score (optimal)
+  const [maxReachedLevel, setMaxReachedLevel] = useState(1); // Highest level unlocked
 
   // Level pre-generation cache
   const levelCacheRef = useRef(new Map()); // Map of levelNumber -> blocks array
@@ -70,6 +73,8 @@ export function useGameLogic(firebaseHook = null) {
       try {
         const savedScore = localStorage.getItem('diaBlockGlobalScore');
         const savedLevel = localStorage.getItem('diaBlockLevel');
+        const savedMaxLevel = localStorage.getItem('diaBlockMaxLevel');
+        const savedLevelScores = localStorage.getItem('diaBlockLevelScores');
         
         if (savedScore !== null && savedScore !== undefined) {
           const parsedScore = parseInt(savedScore, 10);
@@ -85,6 +90,28 @@ export function useGameLogic(firebaseHook = null) {
           // Validate level is a valid positive number
           if (!isNaN(parsedLevel) && parsedLevel >= 1 && parsedLevel <= 10000) {
             setLevelNumber(parsedLevel);
+            // If max level not saved, assume current level is max
+            if (!savedMaxLevel) {
+              setMaxReachedLevel(parsedLevel);
+            }
+          }
+        }
+
+        if (savedMaxLevel) {
+          const parsedMax = parseInt(savedMaxLevel, 10);
+          if (!isNaN(parsedMax) && parsedMax >= 1) {
+            setMaxReachedLevel(parsedMax);
+          }
+        }
+
+        if (savedLevelScores) {
+          try {
+            const parsedScores = JSON.parse(savedLevelScores);
+            if (parsedScores && typeof parsedScores === 'object') {
+              setLevelScores(parsedScores);
+            }
+          } catch (e) {
+            console.error('Failed to parse saved level scores:', e);
           }
         }
       } catch (error) {
@@ -126,6 +153,98 @@ export function useGameLogic(firebaseHook = null) {
     } catch (e) {
       console.error('Failed to load played hashes or level scores:', e);
     }
+  }, []);
+
+  // Load best moves and scores from levels.json metadata
+  useEffect(() => {
+    let cancelled = false;
+    
+    async function loadLevelMetadata() {
+      // Wait a bit to ensure app is fully loaded
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      if (cancelled) return;
+      
+      try {
+        // Use AbortController for timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        
+        const response = await fetch('/levels.json', { 
+          signal: controller.signal,
+          cache: 'default'
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (cancelled) return;
+        
+        if (!response.ok) {
+          console.warn('Failed to load levels.json for metadata');
+          return;
+        }
+        
+        const levelsData = await response.json();
+        
+        if (cancelled) return;
+        
+        if (levelsData && levelsData.metadata) {
+          const bestMovesMap = {};
+          const bestScoresMap = {};
+          
+          try {
+            Object.keys(levelsData.metadata).forEach(levelKey => {
+              if (cancelled) return;
+              
+              try {
+                const metadata = levelsData.metadata[levelKey];
+                if (metadata && typeof metadata === 'object') {
+                  // Parse best moves
+                  if (metadata.bestMoves !== undefined) {
+                    const bestMoves = parseInt(metadata.bestMoves, 10);
+                    if (!isNaN(bestMoves) && bestMoves > 0) {
+                      bestMovesMap[levelKey] = bestMoves;
+                    }
+                  }
+                  
+                  // Parse best score
+                  if (metadata.bestScore !== undefined) {
+                    const bestScore = parseInt(metadata.bestScore, 10);
+                    if (!isNaN(bestScore) && bestScore > 0) {
+                      bestScoresMap[levelKey] = bestScore;
+                    }
+                  }
+                }
+              } catch (e) {
+                // Skip invalid metadata entries
+                console.warn(`Invalid metadata for level ${levelKey}:`, e);
+              }
+            });
+            
+            if (!cancelled) {
+              setLevelBestMoves(bestMovesMap);
+              setLevelBestScores(bestScoresMap);
+              console.log(`✅ Loaded metadata for ${Object.keys(bestMovesMap).length} levels`);
+            }
+          } catch (parseError) {
+            console.error('Error parsing metadata:', parseError);
+          }
+        }
+      } catch (error) {
+        if (error.name === 'AbortError') {
+          console.warn('Metadata loading timeout - continuing without optimal stats');
+        } else {
+          console.error('Failed to load metadata from levels.json:', error);
+        }
+        // Don't crash - just continue without metadata
+      }
+    }
+    
+    loadLevelMetadata();
+    
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Save played hashes when updated
@@ -517,6 +636,13 @@ export function useGameLogic(firebaseHook = null) {
           return prev;
         });
 
+        // Update max reached level
+        const nextLevel = levelNumber + 1;
+        if (nextLevel > maxReachedLevel) {
+          setMaxReachedLevel(nextLevel);
+          localStorage.setItem('diaBlockMaxLevel', nextLevel.toString());
+        }
+
         setGlobalScore(prev => {
           const newScore = Math.max(0, prev + levelScore); // Ensure global score >= 0
           try {
@@ -907,6 +1033,8 @@ export function useGameLogic(firebaseHook = null) {
     currentLevelScore,
     levelScores,
     bestLevelScore: levelScores[levelNumber] || 0,
+    levelBestMoves,
+    bestMoves: levelBestMoves[levelNumber] ?? null,
     generateLevel,
     nextLevel,
     resetLevel,
@@ -915,6 +1043,9 @@ export function useGameLogic(firebaseHook = null) {
     handleDragMove,
     handleDragEnd,
     getCellSize,
-    GRID_SIZE
+    GRID_SIZE,
+    levelBestMoves, // Added
+    levelBestScores, // Added
+    maxReachedLevel // Added
   };
 }

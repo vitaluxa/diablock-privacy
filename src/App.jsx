@@ -49,12 +49,25 @@ function App() {
   // Initialize background music
   const musicHook = useBackgroundMusic();
 
-  // Initialize Ads and Sound Effects
+  // Initialize Ads and Sound Effects (with error handling)
   useEffect(() => {
-    adService.init();
-    soundEffectsService.loadSettings();
-    soundEffectsService.initializeAudioContext();
-    setSoundEffectsMuted(soundEffectsService.getMuted());
+    try {
+      adService.init().catch(err => {
+        console.error('Ad service init failed:', err);
+        // Don't crash if ads fail to initialize
+      });
+    } catch (err) {
+      console.error('Ad service init error:', err);
+    }
+    
+    try {
+      soundEffectsService.loadSettings();
+      soundEffectsService.initializeAudioContext();
+      setSoundEffectsMuted(soundEffectsService.getMuted());
+    } catch (err) {
+      console.error('Sound effects init error:', err);
+      // Continue without sound effects
+    }
   }, []);
 
   const {
@@ -69,6 +82,7 @@ function App() {
     currentLevelScore,
     levelScores,
     bestLevelScore,
+    bestMoves,
     generateLevel,
     nextLevel,
     resetLevel,
@@ -77,7 +91,10 @@ function App() {
     handleDragMove,
     handleDragEnd,
     getCellSize,
-    GRID_SIZE
+    GRID_SIZE,
+    levelBestMoves,
+    levelBestScores,
+    maxReachedLevel
   } = useGameLogic(firebaseHook);
 
 
@@ -201,6 +218,17 @@ function App() {
                 title="Main Menu"
               >
                 ☰ Menu
+              </button>
+              <button
+                onClick={() => {
+                  if (isLoading) return;
+                  setShowLevelSelect(true);
+                }}
+                disabled={isLoading}
+                className="px-3 md:px-4 py-1.5 md:py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                title="Select Level"
+              >
+                <Grid size={18} />
               </button>
                 <button
                   onClick={() => {
@@ -328,6 +356,8 @@ function App() {
           levelNumber={levelNumber}
           currentLevelScore={currentLevelScore}
           bestLevelScore={bestLevelScore}
+          optimalMoves={levelBestMoves[levelNumber]}
+          optimalScore={levelBestScores[levelNumber]}
           globalScore={globalScore}
           onNextLevel={handleNextLevel}
           onReplay={handleReplayLevel}
@@ -345,6 +375,19 @@ function App() {
           isOpen={showScoreboard}
           onClose={() => setShowScoreboard(false)}
           firebaseHook={firebaseHook}
+        />
+
+        {/* Level Select Modal */}
+        <LevelSelectModal
+          isOpen={showLevelSelect}
+          onClose={() => setShowLevelSelect(false)}
+          currentLevel={levelNumber}
+          maxLevel={maxReachedLevel}
+          levelScores={levelScores}
+          onSelectLevel={(level) => {
+            handleNextLevel(level);
+            setShowLevelSelect(false);
+          }}
         />
         
         {/* Debug Panel (Hidden/Removed from UI but component kept for safety if needed later) */}

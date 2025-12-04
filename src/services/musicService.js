@@ -16,7 +16,7 @@ class MusicService {
   constructor() {
     this.audio = null;
     this.isPlaying = false;
-    this.volume = 0.5;
+    this.volume = 0.4; // Reduced from 0.5 to 0.4 (20% quieter)
     this.isMuted = false;
     this.currentTrackIndex = 0;
     this.audioContext = null; // For fallback if audio element fails
