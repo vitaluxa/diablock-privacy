@@ -181,6 +181,34 @@ class BillingService {
       currency: 'USD'
     };
   }
+
+  /**
+   * DEBUG: Reset purchase status (for testing)
+   */
+  resetPurchase() {
+    console.log('🔧 DEBUG: Resetting "No Ads" purchase status');
+    this.hasPurchasedNoAds = false;
+    localStorage.removeItem('diaBlockNoAdsPurchased');
+    console.log('✅ Purchase status reset. Ads should now show.');
+    return true;
+  }
+
+  /**
+   * DEBUG: Get purchase status
+   */
+  getStatus() {
+    const stored = localStorage.getItem('diaBlockNoAdsPurchased');
+    return {
+      hasPurchasedNoAds: this.hasPurchasedNoAds,
+      localStorageValue: stored,
+      adsEnabled: !this.hasPurchasedNoAds
+    };
+  }
 }
 
 export const billingService = new BillingService();
+
+// Expose to window for debugging
+if (typeof window !== 'undefined') {
+  window.billingService = billingService;
+}
