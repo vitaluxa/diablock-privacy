@@ -20,11 +20,18 @@ class AdService {
     // REAL AdMob IDs from your AdMob console
     this.adConfig = {
       appId: 'ca-app-pub-6942733289376891~1776891763',
-      // Bottom banner ID
-      bannerId: 'ca-app-pub-6942733289376891/1585320077',
-      // Interstitial ID
+      // All banner IDs from your AdMob console - will try each until one fills
+      bannerIds: [
+        'ca-app-pub-6942733289376891/1585320077', // bottomDia Block Banner
+        'ca-app-pub-6942733289376891/4351100120', // Dia Block Banner
+        'ca-app-pub-6942733289376891/4514627945', // Dia Block Banner
+        'ca-app-pub-6942733289376891/8262301265', // Dia Block Banner
+      ],
+      // Interstitial ID (working!)
       interstitialId: 'ca-app-pub-6942733289376891/5332993392',
     };
+    
+    this.currentBannerIndex = 0; // Track which banner ID we're trying
 
     this.interstitialLoaded = false;
     this.interstitialRetryCount = 0;
@@ -60,19 +67,33 @@ class AdService {
     });
 
     AdMob.addListener('bannerAdFailedToLoad', (error) => {
-      console.error('❌ Banner failed:', JSON.stringify(error));
+      const currentBannerId = this.adConfig.bannerIds[this.currentBannerIndex];
+      console.error(`❌ Banner ${this.currentBannerIndex + 1}/${this.adConfig.bannerIds.length} failed:`, JSON.stringify(error));
+      console.error(`❌ Failed banner ID: ${currentBannerId}`);
+      
       this.bannerVisible = false;
       this.bannerShown = false;
       this.bannerLoading = false;
-      this.bannerRetryCount++;
       
-      // Only retry if under max retries, with exponential backoff
-      if (this.bannerRetryCount <= this.maxBannerRetries) {
-        const delay = Math.min(60000, 15000 * this.bannerRetryCount); // 15s, 30s, 45s, max 60s
-        console.log(`🔄 Will retry banner in ${delay/1000}s (attempt ${this.bannerRetryCount}/${this.maxBannerRetries})`);
-        setTimeout(() => this.showBanner(), delay);
+      // Try next banner ID
+      this.currentBannerIndex++;
+      
+      if (this.currentBannerIndex < this.adConfig.bannerIds.length) {
+        const nextBannerId = this.adConfig.bannerIds[this.currentBannerIndex];
+        console.log(`🔄 Trying next banner ID: ${nextBannerId}`);
+        setTimeout(() => this.showBanner(), 2000); // Quick retry with different ID
       } else {
-        console.log('⚠️ Max banner retries reached. Will try again on next level.');
+        // All banner IDs failed, wait longer and start over
+        this.currentBannerIndex = 0;
+        this.bannerRetryCount++;
+        
+        if (this.bannerRetryCount <= this.maxBannerRetries) {
+          const delay = 30000; // 30 seconds before trying all IDs again
+          console.log(`⚠️ All banner IDs failed. Retry cycle ${this.bannerRetryCount}/${this.maxBannerRetries} in ${delay/1000}s`);
+          setTimeout(() => this.showBanner(), delay);
+        } else {
+          console.log('⚠️ Max banner retry cycles reached. Will try on next level.');
+        }
       }
     });
 
@@ -155,7 +176,7 @@ class AdService {
           });
 
           console.log('✅ AdMob initialized - REAL ADS MODE');
-          console.log('📱 Banner ID:', this.adConfig.bannerId);
+          console.log('📱 Banner IDs to try:', this.adConfig.bannerIds);
           console.log('📱 Interstitial ID:', this.adConfig.interstitialId);
           
           this.isInitialized = true;
@@ -201,7 +222,10 @@ class AdService {
       return;
     }
 
-    console.log('📱 Requesting banner ad...');
+    // Get current banner ID to try
+    const currentBannerId = this.adConfig.bannerIds[this.currentBannerIndex];
+    console.log(`📱 Requesting banner ad (ID ${this.currentBannerIndex + 1}/${this.adConfig.bannerIds.length})...`);
+    console.log(`📱 Banner ID: ${currentBannerId}`);
     this.bannerLoading = true;
 
     try {
@@ -209,15 +233,22 @@ class AdService {
         const platform = window.Capacitor.getPlatform();
         if (platform === 'android' || platform === 'ios') {
           
+          // Remove any existing banner first
+          try {
+            await AdMob.removeBanner();
+          } catch (e) {
+            // Ignore if no banner exists
+          }
+          
           const options = {
-            adId: this.adConfig.bannerId,
+            adId: currentBannerId,
             adSize: BannerAdSize.BANNER,
             position: BannerAdPosition.BOTTOM_CENTER,
             margin: 0,
             isTesting: false,
           };
 
-          console.log('📱 Banner request:', this.adConfig.bannerId);
+          console.log('📱 Banner options:', JSON.stringify(options));
           await AdMob.showBanner(options);
           console.log('✅ Banner request sent');
           return;
@@ -253,7 +284,9 @@ class AdService {
     // Only request if not already showing/loading
     if (!this.bannerShown && !this.bannerLoading) {
       console.log('🔄 Re-requesting banner...');
-      this.bannerRetryCount = 0; // Reset retries when explicitly called
+      // Reset to try all banner IDs again
+      this.currentBannerIndex = 0;
+      this.bannerRetryCount = 0;
       await this.showBanner();
     }
   }
@@ -408,27 +441,51 @@ class AdService {
       bannerShown: this.bannerShown,
       bannerLoading: this.bannerLoading,
       bannerRetryCount: this.bannerRetryCount,
+      currentBannerIndex: this.currentBannerIndex,
+      currentBannerId: this.adConfig.bannerIds[this.currentBannerIndex],
+      allBannerIds: this.adConfig.bannerIds,
       interstitialLoaded: this.interstitialLoaded,
       levelsCompletedSinceLastAd: this.levelsCompletedSinceLastAd,
       levelsUntilNextAd: this.levelsUntilNextAd,
       hasNoAdsPurchase: billingService.hasNoAdsPurchase(),
-      bannerId: this.adConfig.bannerId,
       interstitialId: this.adConfig.interstitialId,
     };
   }
 
   /**
-   * Force refresh banner
+   * Force refresh banner - tries all banner IDs from the beginning
    */
   async forceShowBanner() {
-    console.log('🔧 Force refreshing banner...');
+    console.log('🔧 Force refreshing banner - will try all IDs...');
+    this.bannerRetryCount = 0;
+    this.currentBannerIndex = 0; // Start from first banner ID
+    this.bannerLoading = false;
+    this.bannerShown = false;
+    this.bannerVisible = false;
+    try {
+      await AdMob.removeBanner();
+    } catch (e) {}
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await this.showBanner();
+  }
+  
+  /**
+   * Try a specific banner ID by index
+   */
+  async tryBannerById(index) {
+    if (index < 0 || index >= this.adConfig.bannerIds.length) {
+      console.log('❌ Invalid banner index:', index);
+      return;
+    }
+    console.log(`🔧 Trying banner ID ${index + 1}: ${this.adConfig.bannerIds[index]}`);
+    this.currentBannerIndex = index;
     this.bannerRetryCount = 0;
     this.bannerLoading = false;
     this.bannerShown = false;
     try {
       await AdMob.removeBanner();
     } catch (e) {}
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
     await this.showBanner();
   }
 
