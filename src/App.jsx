@@ -10,6 +10,7 @@ import { Instructions } from './components/Instructions';
 import { PromotionOverlay } from './components/PromotionOverlay';
 import { TermsOverlay } from './components/TermsOverlay';
 import { LevelSelectModal } from './components/LevelSelectModal'; // Added
+import { SoundSettingsButton } from './components/SoundSettingsButton'; // Added
 import ErrorBoundary from './components/ErrorBoundary';
 import { useGameLogic } from './hooks/useGameLogic';
 import { useFirebase } from './hooks/useFirebase';
@@ -51,23 +52,32 @@ function App() {
 
   // Initialize Ads and Sound Effects (with error handling)
   useEffect(() => {
-    try {
-      adService.init().catch(err => {
+    async function initializeServices() {
+      try {
+        await adService.init();
+        // Ensure banner is visible after initialization
+        await adService.ensureBannerVisible();
+      } catch (err) {
         console.error('Ad service init failed:', err);
-        // Don't crash if ads fail to initialize
-      });
-    } catch (err) {
-      console.error('Ad service init error:', err);
+        // Don't crash if ads fail to initialize, but try to show banner anyway
+        try {
+          await adService.ensureBannerVisible();
+        } catch (bannerErr) {
+          console.error('Failed to show banner:', bannerErr);
+        }
+      }
+      
+      try {
+        soundEffectsService.loadSettings();
+        soundEffectsService.initializeAudioContext();
+        setSoundEffectsMuted(soundEffectsService.getMuted());
+      } catch (err) {
+        console.error('Sound effects init error:', err);
+        // Continue without sound effects
+      }
     }
     
-    try {
-      soundEffectsService.loadSettings();
-      soundEffectsService.initializeAudioContext();
-      setSoundEffectsMuted(soundEffectsService.getMuted());
-    } catch (err) {
-      console.error('Sound effects init error:', err);
-      // Continue without sound effects
-    }
+    initializeServices();
   }, []);
 
   const {
@@ -94,7 +104,8 @@ function App() {
     GRID_SIZE,
     levelBestMoves,
     levelBestScores,
-    maxReachedLevel
+    maxReachedLevel,
+    completedLevels
   } = useGameLogic(firebaseHook);
 
 
@@ -118,6 +129,9 @@ function App() {
     // Don't add +1 here because nextLevelRef.current already has the correct next level
     // from the win save logic (it was set to levelNumber + 1 when the level was won)
     nextLevel(); // Changed from generateLevel(false, levelNumber, levelNumber);
+    
+    // Ensure banner stays visible after level transition
+    await adService.ensureBannerVisible();
   };
 
   const handleReplayLevel = () => { // Added
@@ -157,11 +171,19 @@ function App() {
 
   const cellSize = getCellSize();
 
-  // Start music on first user interaction
+  // Start music and sound effects on first user interaction
   useEffect(() => {
-    const handleFirstInteraction = () => {
+    const handleFirstInteraction = async () => {
+      // Resume sound effects audio context (critical for Android/Capacitor)
+      try {
+        await soundEffectsService.resumeAudioContext();
+      } catch (error) {
+        console.warn('Failed to resume sound effects audio context:', error);
+      }
+      
+      // Start music if not muted
       if (musicHook && !musicHook.isPlaying && !musicHook.isMuted) {
-        musicHook.startMusicOnInteraction();
+        await musicHook.startMusicOnInteraction();
       }
     };
     
@@ -174,6 +196,54 @@ function App() {
       document.removeEventListener('click', handleFirstInteraction);
       document.removeEventListener('touchstart', handleFirstInteraction);
       document.removeEventListener('keydown', handleFirstInteraction);
+    };
+  }, [musicHook]);
+
+  // Pause music when app goes to background, resume when foreground
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // App went to background - pause music
+        if (musicHook && musicHook.isPlaying) {
+          musicHook.pause();
+        }
+      } else {
+        // App came to foreground - resume if not muted
+        if (musicHook && !musicHook.isMuted && !musicHook.isPlaying) {
+          musicHook.startMusicOnInteraction();
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Also handle Capacitor app state changes for native platforms
+    if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins) {
+      const { App } = window.Capacitor.Plugins;
+      if (App) {
+        const listener = App.addListener('appStateChange', ({ isActive }) => {
+          if (!isActive) {
+            // App went to background
+            if (musicHook && musicHook.isPlaying) {
+              musicHook.pause();
+            }
+          } else {
+            // App came to foreground
+            if (musicHook && !musicHook.isMuted && !musicHook.isPlaying) {
+              musicHook.startMusicOnInteraction();
+            }
+          }
+        });
+        
+        return () => {
+          document.removeEventListener('visibilitychange', handleVisibilityChange);
+          listener.remove();
+        };
+      }
+    }
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [musicHook]);
 
@@ -201,12 +271,12 @@ function App() {
 
         {/* Top Bar - Mobile Friendly */}
         {!showMainMenu && (
-          <div className="flex justify-between items-center mb-4 md:mb-6 px-2">
+          <div className="flex justify-between items-center mb-4 md:mb-6 px-1 md:px-2">
             <div className="text-sm md:text-base">
               <span className="text-gray-400">Level </span>
               <span className="font-bold text-blue-400">{levelNumber}</span>
             </div>
-            <div className="flex gap-2 md:gap-4">
+            <div className="flex flex-wrap gap-1 md:gap-2 items-center">
               <button
                 onClick={() => {
                   if (isLoading) return;
@@ -214,7 +284,7 @@ function App() {
                   setShowMainMenu(true);
                 }}
                 disabled={isLoading}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                className="px-2 md:px-3 py-1.5 md:py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
                 title="Main Menu"
               >
                 ☰ Menu
@@ -225,54 +295,46 @@ function App() {
                   setShowLevelSelect(true);
                 }}
                 disabled={isLoading}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                className="px-2 md:px-3 py-1.5 md:py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors flex items-center justify-center"
                 title="Select Level"
               >
-                <Grid size={18} />
+                <Grid size={16} className="md:w-5 md:h-5" />
               </button>
-                <button
-                  onClick={() => {
-                    if (isLoading) return;
-                    setShowScoreboard(true);
-                  }}
-                  disabled={isLoading}
-                  className="px-3 md:px-4 py-1.5 md:py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
-                >
-                  📊 Score
-                </button>
-                
-                {/* No Ads Button */}
-                <button
-                  onClick={handlePurchaseNoAds}
-                  className="px-3 md:px-4 py-1.5 md:py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
-                  title="Remove Ads"
-                >
-                  🚫 Ads
-                </button>
-
-              {/* Music Toggle Button */}
               <button
-                onClick={musicHook.toggleMute}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
-                title={musicHook.isMuted ? 'Unmute Music' : 'Mute Music'}
+                onClick={() => {
+                  if (isLoading) return;
+                  setShowScoreboard(true);
+                }}
+                disabled={isLoading}
+                className="px-2 md:px-3 py-1.5 md:py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                title="Scoreboard"
               >
-                {musicHook.isMuted ? '🔇' : '🔊'}
+                📊
               </button>
               
-              {/* Sound Effects Toggle Button */}
+              {/* No Ads Button */}
               <button
-                onClick={handleToggleSoundEffects}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-gray-700 hover:bg-gray-600 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
-                title={soundEffectsMuted ? 'Unmute Sound Effects' : 'Mute Sound Effects'}
+                onClick={handlePurchaseNoAds}
+                className="px-2 md:px-3 py-1.5 md:py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                title="Remove Ads"
               >
-                {soundEffectsMuted ? '🔕' : '🔔'}
+                🚫
               </button>
+
+              {/* Combined Sound Settings Button */}
+              <SoundSettingsButton
+                musicHook={musicHook}
+                soundEffectsMuted={soundEffectsMuted}
+                onToggleSoundEffects={handleToggleSoundEffects}
+              />
+              
               <button
                 onClick={handleStartOver}
                 disabled={isLoading}
-                className="px-3 md:px-4 py-1.5 md:py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                className="px-2 md:px-3 py-1.5 md:py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                title="Start Over"
               >
-                🔄 Start Over
+                🔄
               </button>
             </div>
           </div>
@@ -384,10 +446,8 @@ function App() {
           currentLevel={levelNumber}
           maxLevel={maxReachedLevel}
           levelScores={levelScores}
-          onSelectLevel={(level) => {
-            handleNextLevel(level);
-            setShowLevelSelect(false);
-          }}
+          completedLevels={completedLevels}
+          onSelectLevel={handleSelectLevel}
         />
         
         {/* Debug Panel (Hidden/Removed from UI but component kept for safety if needed later) */}

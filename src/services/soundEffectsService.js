@@ -37,11 +37,17 @@ class SoundEffectsService {
    * Resume audio context if suspended
    */
   async resumeAudioContext() {
+    // Ensure audio context is initialized first
+    if (!this.audioContext) {
+      this.initializeAudioContext();
+    }
+    
     if (this.audioContext && this.audioContext.state === 'suspended') {
       try {
         await this.audioContext.resume();
+        console.log('Sound effects audio context resumed');
       } catch (error) {
-        // Ignore - may require user interaction
+        console.warn('Failed to resume sound effects audio context:', error);
       }
     }
   }
@@ -50,10 +56,18 @@ class SoundEffectsService {
    * Create a short 8-bit style sound
    */
   createSound(frequency, duration, type = 'square', volume = 0.1) {
+    // Ensure audio context is initialized
+    if (!this.audioContext) {
+      this.initializeAudioContext();
+    }
+    
     if (!this.audioContext || !this.masterGain || this.isMuted) return null;
 
     try {
-      this.initializeAudioContext();
+      // Ensure audio context is resumed (critical for Android/Capacitor)
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume().catch(() => {});
+      }
       
       const osc = this.audioContext.createOscillator();
       const gainNode = this.audioContext.createGain();
@@ -96,7 +110,7 @@ class SoundEffectsService {
     
     // Lower pitch sawtooth for "grinding/sliding" feel (friction)
     const baseFreq = 100 + Math.random() * 20; // 100-120 Hz
-    this.createSound(baseFreq, 0.05, 'sawtooth', 0.05);
+    this.createSound(baseFreq, 0.05, 'sawtooth', 0.0845); // Increased by 30% from 0.065 (0.065 * 1.3 = 0.0845)
   }
 
   /**
@@ -107,11 +121,11 @@ class SoundEffectsService {
     
     // "Thud" sound - low frequency square/triangle for impact
     const freq1 = 80 + Math.random() * 10; 
-    this.createSound(freq1, 0.08, 'square', 0.1);
+    this.createSound(freq1, 0.08, 'square', 0.169); // Increased by 30% from 0.13 (0.13 * 1.3 = 0.169)
     
     // Subtle high click for definition (snap into place)
     setTimeout(() => {
-       this.createSound(400, 0.03, 'triangle', 0.05);
+       this.createSound(400, 0.03, 'triangle', 0.0845); // Increased by 30% from 0.065 (0.065 * 1.3 = 0.0845)
     }, 5);
   }
 

@@ -11,6 +11,8 @@ class AdService {
     this.isInitialized = false;
     this.levelsCompletedSinceLastAd = 0;
     this.levelsUntilNextAd = this.getRandomAdInterval(); // 5-10 levels
+    this.bannerVisible = false; // Track banner visibility state
+    this.bannerShown = false; // Track if banner was successfully shown
     
     // LIVE AdMob IDs from your AdMob console
     this.adConfig = {
@@ -87,13 +89,25 @@ class AdService {
    * Show banner ad at bottom of screen
    */
   async showBanner() {
-    if (billingService.hasNoAdsPurchase()) return;
+    if (billingService.hasNoAdsPurchase()) {
+      console.log('💎 Banner not shown: User has "No Ads" purchase');
+      this.bannerVisible = false;
+      this.bannerShown = false;
+      return;
+    }
 
     try {
       // Check if running on Android/iOS
       if (typeof window !== 'undefined' && window.Capacitor) {
         const platform = window.Capacitor.getPlatform();
         if (platform === 'android' || platform === 'ios') {
+          // First, try to remove any existing banner to ensure clean state
+          try {
+            await AdMob.removeBanner();
+          } catch (e) {
+            // Ignore if banner doesn't exist
+          }
+          
           const options = {
             adId: this.adConfig.bannerId,
             adSize: BannerAdSize.BANNER,
@@ -102,7 +116,9 @@ class AdService {
           };
 
           await AdMob.showBanner(options);
-          console.log('✅ Banner ad shown');
+          console.log('✅ Banner ad shown on', platform);
+          this.bannerVisible = true;
+          this.bannerShown = true;
           return;
         }
       }
@@ -110,9 +126,63 @@ class AdService {
       // Fallback to mock for web/browser
       console.log('🧪 Mock: Banner ad (web/browser mode)');
       this.showMockBanner();
+      this.bannerVisible = true;
+      this.bannerShown = true;
     } catch (error) {
       console.error('❌ Failed to show banner:', error);
+      this.bannerVisible = false;
+      this.bannerShown = false;
+      
+      // Retry after a short delay
+      setTimeout(async () => {
+        try {
+          if (typeof window !== 'undefined' && window.Capacitor) {
+            const platform = window.Capacitor.getPlatform();
+            if (platform === 'android' || platform === 'ios') {
+              const options = {
+                adId: this.adConfig.bannerId,
+                adSize: BannerAdSize.BANNER,
+                position: BannerAdPosition.BOTTOM_CENTER,
+                margin: 0,
+              };
+              await AdMob.showBanner(options);
+              console.log('✅ Banner ad shown on retry');
+              this.bannerVisible = true;
+              this.bannerShown = true;
+            }
+          }
+        } catch (retryError) {
+          console.error('❌ Banner retry also failed:', retryError);
+        }
+      }, 1000);
+      
+      // Show mock banner as fallback for web
       this.showMockBanner();
+    }
+  }
+
+  /**
+   * Ensure banner is visible (call this to make sure banner stays visible)
+   */
+  async ensureBannerVisible() {
+    if (billingService.hasNoAdsPurchase()) {
+      // Hide banner if user has no ads
+      if (this.bannerVisible) {
+        await this.hideBanner();
+      }
+      return;
+    }
+
+    // Check if already initialized
+    if (!this.isInitialized) {
+      await this.init();
+      return;
+    }
+
+    // Always try to show banner if not visible or not shown yet
+    if (!this.bannerVisible || !this.bannerShown) {
+      console.log('🔄 Ensuring banner is visible...');
+      await this.showBanner();
     }
   }
 
@@ -126,13 +196,16 @@ class AdService {
         if (platform === 'android' || platform === 'ios') {
           await AdMob.hideBanner();
           console.log('✅ Banner ad hidden');
+          this.bannerVisible = false;
           return;
         }
       }
       
       this.hideMockBanner();
+      this.bannerVisible = false;
     } catch (error) {
       console.error('❌ Failed to hide banner:', error);
+      this.bannerVisible = false;
     }
   }
 
@@ -186,6 +259,9 @@ class AdService {
           await AdMob.showInterstitial();
           console.log('✅ Interstitial ad shown');
           
+          // Banner might be hidden after interstitial, mark as not visible
+          this.bannerVisible = false;
+          
           // Reload for next time
           this.interstitialLoaded = false;
           await this.loadInterstitial();
@@ -212,6 +288,9 @@ class AdService {
   async onLevelCompleted() {
     if (billingService.hasNoAdsPurchase()) return;
 
+    // Ensure banner is still visible
+    await this.ensureBannerVisible();
+
     this.levelsCompletedSinceLastAd++;
     console.log(`📊 Levels since last ad: ${this.levelsCompletedSinceLastAd}/${this.levelsUntilNextAd}`);
 
@@ -223,6 +302,9 @@ class AdService {
       this.levelsCompletedSinceLastAd = 0;
       this.levelsUntilNextAd = this.getRandomAdInterval();
       console.log(`📊 Next ad in ${this.levelsUntilNextAd} levels`);
+      
+      // Ensure banner is visible after interstitial
+      await this.ensureBannerVisible();
     }
   }
 
@@ -230,9 +312,14 @@ class AdService {
    * Remove ads (called after purchase)
    */
   async removeAds() {
-    console.log('💎 Removing all ads...');
-    await this.hideBanner();
-    this.hideMockBanner();
+    // Only hide if user actually has the purchase
+    if (billingService.hasNoAdsPurchase()) {
+      console.log('💎 Removing all ads...');
+      await this.hideBanner();
+      this.hideMockBanner();
+    } else {
+      console.warn('⚠️ removeAds called but user has not purchased "No Ads"');
+    }
   }
 
   // ===== MOCK AD METHODS FOR WEB/DEVELOPMENT =====

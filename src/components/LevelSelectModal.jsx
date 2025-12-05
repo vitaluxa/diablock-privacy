@@ -1,7 +1,7 @@
 import React from 'react';
 import { X, Star, Lock } from 'lucide-react';
 
-export function LevelSelectModal({ isOpen, onClose, currentLevel, maxLevel, levelScores, onSelectLevel }) {
+export function LevelSelectModal({ isOpen, onClose, currentLevel, maxLevel, levelScores, completedLevels, onSelectLevel }) {
   if (!isOpen) return null;
 
   // Generate array of levels up to max reached (or current level)
@@ -32,6 +32,7 @@ export function LevelSelectModal({ isOpen, onClose, currentLevel, maxLevel, leve
               const score = levelScores[level] || 0;
               const isCurrent = level === currentLevel;
               const isLocked = level > (maxLevel || currentLevel); // Should not happen with current logic but good for safety
+              const isCompleted = completedLevels && completedLevels.has(level);
 
               return (
                 <button
@@ -47,11 +48,13 @@ export function LevelSelectModal({ isOpen, onClose, currentLevel, maxLevel, leve
                     relative group flex flex-col items-center justify-center p-4 rounded-xl border transition-all duration-200
                     ${isCurrent 
                       ? 'bg-blue-600/20 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)]' 
+                      : isCompleted
+                      ? 'bg-green-900/20 border-green-700 hover:bg-green-900/30 hover:border-green-600 hover:scale-105'
                       : 'bg-gray-800/50 border-gray-700 hover:bg-gray-800 hover:border-gray-600 hover:scale-105'
                     }
                   `}
                 >
-                  <span className={`text-2xl font-bold mb-2 ${isCurrent ? 'text-blue-400' : 'text-white'}`}>
+                  <span className={`text-2xl font-bold mb-2 ${isCurrent ? 'text-blue-400' : isCompleted ? 'text-green-400' : 'text-white'}`}>
                     {level}
                   </span>
                   
@@ -67,13 +70,19 @@ export function LevelSelectModal({ isOpen, onClose, currentLevel, maxLevel, leve
                     </div>
                   ) : (
                     <div className="h-10 flex items-center justify-center text-gray-600 text-xs">
-                      No Score
+                      {isCompleted ? '✓' : 'No Score'}
                     </div>
                   )}
 
                   {isCurrent && (
                     <div className="absolute -top-2 -right-2 bg-blue-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-lg">
                       CURRENT
+                    </div>
+                  )}
+                  
+                  {isCompleted && !isCurrent && (
+                    <div className="absolute -top-1 -right-1 bg-green-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-lg">
+                      ✓
                     </div>
                   )}
                 </button>

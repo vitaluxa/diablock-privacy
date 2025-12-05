@@ -16,7 +16,7 @@ class MusicService {
   constructor() {
     this.audio = null;
     this.isPlaying = false;
-    this.volume = 0.4; // Reduced from 0.5 to 0.4 (20% quieter)
+    this.volume = 0.16; // Reduced by 20% from 0.2 (now 16% volume)
     this.isMuted = false;
     this.currentTrackIndex = 0;
     this.audioContext = null; // For fallback if audio element fails
@@ -499,7 +499,7 @@ class MusicService {
   /**
    * Mute/unmute music
    */
-  toggleMute() {
+  async toggleMute() {
     this.isMuted = !this.isMuted;
     
     if (this.audio) {
@@ -513,7 +513,14 @@ class MusicService {
     if (this.isMuted) {
       this.pause();
     } else {
-      this.resume();
+      // When unmuting, ensure music actually starts
+      if (!this.isPlaying) {
+        // Music should be playing but isn't - start it
+        await this.play();
+      } else {
+        // Music is already playing, just resume
+        await this.resume();
+      }
     }
     
     try {

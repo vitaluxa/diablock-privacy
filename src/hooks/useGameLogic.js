@@ -27,6 +27,7 @@ export function useGameLogic(firebaseHook = null) {
   const [levelBestMoves, setLevelBestMoves] = useState({}); // Map of level -> best moves
   const [levelBestScores, setLevelBestScores] = useState({}); // Map of level -> best score (optimal)
   const [maxReachedLevel, setMaxReachedLevel] = useState(1); // Highest level unlocked
+  const [completedLevels, setCompletedLevels] = useState(new Set()); // Track which levels have been completed
 
   // Level pre-generation cache
   const levelCacheRef = useRef(new Map()); // Map of levelNumber -> blocks array
@@ -131,6 +132,15 @@ export function useGameLogic(firebaseHook = null) {
   const nextLevelRef = useRef(null);
   // Track if we're currently saving to prevent multiple simultaneous saves
   const isSavingRef = useRef(false);
+  
+  // Get next unplayed level (lowest level number not in completedLevels)
+  const getNextUnplayedLevel = useCallback(() => {
+    let next = 1;
+    while (completedLevels.has(next)) {
+      next++;
+    }
+    return next;
+  }, [completedLevels]);
   
   // Load played hashes and level scores from localStorage on mount
   useEffect(() => {
@@ -267,7 +277,6 @@ export function useGameLogic(firebaseHook = null) {
       // Reset flag for new win
       hasSavedForWin.current = false;
       lastWonLevel.current = levelNumber;
-      nextLevelRef.current = levelNumber + 1; // Track the next level
     }
 
     if (isWon && !hasSavedForWin.current && !isSavingRef.current) {
@@ -275,16 +284,41 @@ export function useGameLogic(firebaseHook = null) {
         isSavingRef.current = true; // Prevent other saves
         hasSavedForWin.current = true; // Mark as saved immediately
         
-        // Calculate next level (level user will start from next time)
-        const nextLevelNumber = levelNumber + 1;
-        nextLevelRef.current = nextLevelNumber; // Update ref
+        // Add current level to completed levels and calculate next unplayed level
+        let nextLevelNumber = 1;
+        setCompletedLevels(prev => {
+          const newCompleted = new Set(prev);
+          newCompleted.add(levelNumber);
+          
+          // Calculate next unplayed level (lowest level not in completed set)
+          let nextUnplayed = 1;
+          while (newCompleted.has(nextUnplayed)) {
+            nextUnplayed++;
+          }
+          nextLevelNumber = nextUnplayed;
+          nextLevelRef.current = nextUnplayed; // Update ref with next unplayed level
+          
+          // Save to localStorage
+          try {
+            localStorage.setItem('diaBlockCompletedLevels', JSON.stringify([...newCompleted]));
+          } catch (error) {
+            if (error.name === 'QuotaExceededError') {
+              console.warn('localStorage quota exceeded for completed levels');
+            } else {
+              console.error('Failed to save completed levels:', error);
+            }
+          }
+          
+          return newCompleted;
+        });
         
+        // Save to Firebase (outside setState callback)
         if (firebaseHook && firebaseHook.isInitialized) {
           try {
             console.log('☁️ Attempting to save win state to cloud...', { nextLevelNumber, globalScore });
             // Save game state with next level number (so next start will be from next level)
             await firebaseHook.saveGameState({
-              levelNumber: nextLevelNumber, // Save next level, not current completed one
+              levelNumber: nextLevelNumber, // Save next unplayed level, not current completed one
               globalScore,
               achievements: [], // Can add achievements later
             });
@@ -302,7 +336,7 @@ export function useGameLogic(firebaseHook = null) {
         // Always save to localStorage as backup immediately with next level number
         try {
           localStorage.setItem('diaBlockGlobalScore', globalScore.toString());
-          localStorage.setItem('diaBlockLevel', nextLevelNumber.toString()); // Save next level
+          localStorage.setItem('diaBlockLevel', nextLevelNumber.toString()); // Save next unplayed level
         } catch (error) {
           if (error.name === 'QuotaExceededError') {
             console.warn('localStorage quota exceeded, unable to save game state');
@@ -626,13 +660,36 @@ export function useGameLogic(firebaseHook = null) {
         setCurrentLevelScore(levelScore);
         
         // Update best score for this level if improved
+        // Also update global score correctly: subtract old best, add new best
         setLevelScores(prev => {
           const currentBest = prev[levelNumber] || 0;
           if (levelScore > currentBest) {
             const newScores = { ...prev, [levelNumber]: levelScore };
+            
+            // Update global score: subtract old best score, add new best score
+            // This prevents cheating by replaying levels
+            setGlobalScore(oldGlobal => {
+              const adjustedScore = oldGlobal - currentBest + levelScore;
+              const newGlobal = Math.max(0, adjustedScore);
+              
+              // Save to localStorage
+              try {
+                localStorage.setItem('diaBlockGlobalScore', newGlobal.toString());
+              } catch (error) {
+                if (error.name === 'QuotaExceededError') {
+                  console.warn('localStorage quota exceeded, unable to save score');
+                } else {
+                  console.error('Failed to save score to localStorage:', error);
+                }
+              }
+              
+              return newGlobal;
+            });
+            
             localStorage.setItem('diaBlockLevelScores', JSON.stringify(newScores));
             return newScores;
           }
+          // If score didn't improve, don't update global score
           return prev;
         });
 
@@ -642,20 +699,6 @@ export function useGameLogic(firebaseHook = null) {
           setMaxReachedLevel(nextLevel);
           localStorage.setItem('diaBlockMaxLevel', nextLevel.toString());
         }
-
-        setGlobalScore(prev => {
-          const newScore = Math.max(0, prev + levelScore); // Ensure global score >= 0
-          try {
-            localStorage.setItem('diaBlockGlobalScore', newScore.toString());
-          } catch (error) {
-            if (error.name === 'QuotaExceededError') {
-              console.warn('localStorage quota exceeded, unable to save score');
-            } else {
-              console.error('Failed to save score to localStorage:', error);
-            }
-          }
-          return newScore;
-        });
       }
     }
   }, [blocks, elapsedTime, moves, levelNumber, isWon]);
@@ -913,18 +956,20 @@ export function useGameLogic(firebaseHook = null) {
     setDragStartPosition(null);
   }, [draggingBlock, blocks, dragStartPosition]);
 
-  // Next level handler
+  // Next level handler - goes to next unplayed level
   const nextLevel = useCallback((targetLevel = null) => {
-    const newLevel = targetLevel !== null ? targetLevel : levelNumber + 1;
+    // If targetLevel is specified, use it. Otherwise, use next unplayed level
+    const newLevel = targetLevel !== null ? targetLevel : getNextUnplayedLevel();
     setLevelNumber(newLevel);
     setIsWon(false);
     setMoves(0);
     setStartTime(null);
     setElapsedTime(0);
     setCurrentLevelScore(0);
+    nextLevelRef.current = null; // Clear ref since we're using it
     // Generate the new level
-    generateLevel(false, newLevel);
-  }, [levelNumber, generateLevel]);
+    generateLevel(false, newLevel, newLevel);
+  }, [levelNumber, generateLevel, getNextUnplayedLevel]);
 
   const resetLevel = useCallback(() => {
     // Re-generate the current level
@@ -932,13 +977,16 @@ export function useGameLogic(firebaseHook = null) {
   }, [generateLevel, levelNumber]);
 
   const setLevel = useCallback((lvl) => {
+    // Clear any pending next level ref when manually selecting
+    nextLevelRef.current = null;
     setLevelNumber(lvl);
     setIsWon(false);
     setMoves(0);
     setElapsedTime(0);
-    setBlocks([]); // Will trigger loadLevel via useEffect if blocks.length changes
+    setStartTime(null);
+    setCurrentLevelScore(0);
     // Directly call generateLevel to load the specified level
-    generateLevel(false, lvl);
+    generateLevel(false, lvl, lvl);
   }, [generateLevel]);
 
   const [cellSize, setCellSize] = useState(CELL_SIZE);
@@ -1046,6 +1094,7 @@ export function useGameLogic(firebaseHook = null) {
     GRID_SIZE,
     levelBestMoves, // Added
     levelBestScores, // Added
-    maxReachedLevel // Added
+    maxReachedLevel, // Added
+    completedLevels // Added
   };
 }

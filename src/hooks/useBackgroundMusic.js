@@ -7,7 +7,7 @@ import { musicService } from '../services/musicService';
 export function useBackgroundMusic() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolumeState] = useState(0.4); // Reduced from 0.5 to 0.4
+  const [volume, setVolumeState] = useState(0.16); // Reduced by 20% from 0.2 (now 16% volume)
 
   // Initialize music service on mount
   useEffect(() => {
@@ -23,11 +23,22 @@ export function useBackgroundMusic() {
     setVolumeState(musicService.getVolume());
 
     // Try to start playing (may require user interaction)
+    // On Android/Capacitor, audio context starts suspended, so we'll wait for user interaction
     const startMusic = async () => {
       try {
-        await musicService.play();
-        setIsPlaying(true);
+        // Check if audio context is suspended (common on Android/Capacitor)
+        if (musicService.audioContext && musicService.audioContext.state === 'suspended') {
+          console.log('Audio context is suspended, waiting for user interaction');
+          setIsPlaying(false);
+          return; // Will start on first user interaction
+        }
+        
+        if (!musicService.getMuted()) {
+          await musicService.play();
+          setIsPlaying(musicService.isPlaying);
+        }
       } catch (error) {
+        console.log('Music will start after first user interaction:', error);
         // Music will start after first user interaction
         setIsPlaying(false);
       }
@@ -72,10 +83,28 @@ export function useBackgroundMusic() {
   }, [isPlaying, isMuted]);
 
   // Toggle mute
-  const toggleMute = useCallback(() => {
-    const muted = musicService.toggleMute();
+  const toggleMute = useCallback(async () => {
+    const muted = await musicService.toggleMute();
     setIsMuted(muted);
-    setIsPlaying(!muted && musicService.isPlaying);
+    // After unmuting, ensure music actually starts
+    if (!muted) {
+      // Music was unmuted - ensure it's playing
+      try {
+        // Give it a moment for the service to start
+        await new Promise(resolve => setTimeout(resolve, 100));
+        setIsPlaying(musicService.isPlaying);
+        // If still not playing, try to start it
+        if (!musicService.isPlaying) {
+          await musicService.play();
+          setIsPlaying(musicService.isPlaying);
+        }
+      } catch (error) {
+        console.error('Failed to start music after unmute:', error);
+        setIsPlaying(musicService.isPlaying);
+      }
+    } else {
+      setIsPlaying(false);
+    }
   }, []);
 
   // Set volume
