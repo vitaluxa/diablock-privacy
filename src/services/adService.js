@@ -3,7 +3,7 @@
  * Handles banner and interstitial ads using Capacitor AdMob plugin
  */
 
-import { AdMob, BannerAdSize, BannerAdPosition, AdmobConsentStatus } from '@capacitor-community/admob';
+import { AdMob, BannerAdSize, BannerAdPosition } from '@capacitor-community/admob';
 import { billingService } from './billingService';
 
 class AdService {
@@ -11,107 +11,113 @@ class AdService {
     this.isInitialized = false;
     this.levelsCompletedSinceLastAd = 0;
     this.levelsUntilNextAd = this.getRandomAdInterval(); // 5-10 levels
-    this.bannerVisible = false; // Track banner visibility state
-    this.bannerShown = false; // Track if banner was successfully shown
-    this.bannerLoading = false; // Track if banner is currently loading
+    this.bannerVisible = false;
+    this.bannerShown = false;
+    this.bannerLoading = false;
+    this.bannerRetryCount = 0;
+    this.maxBannerRetries = 3;
     
-    // AdMob configuration - USING REAL ADS
-    this.useTestAds = false; // PRODUCTION MODE - Real ads
-    
-    // Test device ID from logcat (for debugging)
-    this.testDeviceId = '125A60BAE4350D790B63FBF7C3BB0F1D';
-    
-    // LIVE AdMob IDs from your AdMob console
+    // REAL AdMob IDs from your AdMob console
     this.adConfig = {
       appId: 'ca-app-pub-6942733289376891~1776891763',
-      // Bottom banner ID (specifically for bottom placement)
+      // Bottom banner ID
       bannerId: 'ca-app-pub-6942733289376891/1585320077',
-      // Interstitial ID (working)
+      // Interstitial ID
       interstitialId: 'ca-app-pub-6942733289376891/5332993392',
     };
-    
-    // Use live IDs
-    this.bannerId = this.adConfig.bannerId;
-    this.interstitialId = this.adConfig.interstitialId;
 
     this.interstitialLoaded = false;
-    this.initializationAttempts = 0;
-    this.maxInitAttempts = 3;
+    this.interstitialRetryCount = 0;
+    this.maxInterstitialRetries = 3;
   }
 
   /**
    * Get random interval for next ad (5-10 levels)
    */
   getRandomAdInterval() {
-    return Math.floor(Math.random() * 6) + 5; // Random between 5-10
+    return Math.floor(Math.random() * 6) + 5;
   }
 
   /**
-   * Set up AdMob event listeners for debugging
+   * Set up AdMob event listeners
    */
   setupEventListeners() {
     // Banner events
     AdMob.addListener('bannerAdLoaded', () => {
-      console.log('✅ Banner ad loaded successfully');
+      console.log('✅ BANNER AD LOADED SUCCESSFULLY!');
       this.bannerVisible = true;
       this.bannerShown = true;
       this.bannerLoading = false;
+      this.bannerRetryCount = 0; // Reset retry count on success
     });
 
     AdMob.addListener('bannerAdSizeChanged', (size) => {
-      console.log('📐 Banner size changed:', size);
+      console.log('📐 Banner size:', JSON.stringify(size));
     });
 
     AdMob.addListener('bannerAdImpression', () => {
-      console.log('👁️ Banner ad impression');
+      console.log('👁️ Banner ad impression - AD IS SHOWING!');
     });
 
     AdMob.addListener('bannerAdFailedToLoad', (error) => {
-      console.error('❌ Banner ad failed to load:', JSON.stringify(error));
-      console.error('❌ Error code:', error?.code);
-      console.error('❌ Error message:', error?.message);
+      console.error('❌ Banner failed:', JSON.stringify(error));
       this.bannerVisible = false;
       this.bannerShown = false;
       this.bannerLoading = false;
-      // Retry after delay
-      setTimeout(() => this.showBanner(), 10000);
+      this.bannerRetryCount++;
+      
+      // Only retry if under max retries, with exponential backoff
+      if (this.bannerRetryCount <= this.maxBannerRetries) {
+        const delay = Math.min(60000, 15000 * this.bannerRetryCount); // 15s, 30s, 45s, max 60s
+        console.log(`🔄 Will retry banner in ${delay/1000}s (attempt ${this.bannerRetryCount}/${this.maxBannerRetries})`);
+        setTimeout(() => this.showBanner(), delay);
+      } else {
+        console.log('⚠️ Max banner retries reached. Will try again on next level.');
+      }
     });
 
     // Interstitial events
     AdMob.addListener('interstitialAdLoaded', () => {
-      console.log('✅ Interstitial ad loaded');
+      console.log('✅ INTERSTITIAL AD LOADED!');
       this.interstitialLoaded = true;
+      this.interstitialRetryCount = 0;
     });
 
     AdMob.addListener('interstitialAdFailedToLoad', (error) => {
-      console.error('❌ Interstitial ad failed to load:', JSON.stringify(error));
-      console.error('❌ Interstitial error code:', error?.code);
-      console.error('❌ Interstitial error message:', error?.message);
+      console.error('❌ Interstitial failed to load:', JSON.stringify(error));
       this.interstitialLoaded = false;
-      // Retry loading after delay
-      setTimeout(() => this.loadInterstitial(), 10000);
+      this.interstitialRetryCount++;
+      
+      if (this.interstitialRetryCount <= this.maxInterstitialRetries) {
+        const delay = Math.min(60000, 20000 * this.interstitialRetryCount);
+        console.log(`🔄 Will retry interstitial in ${delay/1000}s`);
+        setTimeout(() => this.loadInterstitial(), delay);
+      }
     });
 
     AdMob.addListener('interstitialAdShowed', () => {
-      console.log('✅ Interstitial ad showed');
+      console.log('✅ INTERSTITIAL AD SHOWED!');
     });
 
     AdMob.addListener('interstitialAdDismissed', () => {
-      console.log('👋 Interstitial ad dismissed');
+      console.log('👋 Interstitial dismissed');
       this.interstitialLoaded = false;
       // Reload for next time
-      this.loadInterstitial();
+      setTimeout(() => this.loadInterstitial(), 2000);
       // Re-show banner after interstitial
-      setTimeout(() => this.showBanner(), 500);
+      setTimeout(() => {
+        this.bannerRetryCount = 0; // Reset retries
+        this.showBanner();
+      }, 1000);
     });
 
     AdMob.addListener('interstitialAdFailedToShow', (error) => {
-      console.error('❌ Interstitial ad failed to show:', JSON.stringify(error));
+      console.error('❌ Interstitial failed to show:', JSON.stringify(error));
       this.interstitialLoaded = false;
       this.loadInterstitial();
     });
 
-    console.log('📱 AdMob event listeners set up');
+    console.log('📱 AdMob event listeners ready');
   }
 
   /**
@@ -119,215 +125,141 @@ class AdService {
    */
   async init() {
     if (this.isInitialized) {
-      console.log('📱 AdService: Already initialized');
+      console.log('📱 AdService already initialized');
       return;
     }
     
     console.log('📱 AdService: Initializing...');
 
-    // Check if user has purchased "No Ads"
+    // Check for "No Ads" purchase
     await billingService.initialize();
     if (billingService.hasNoAdsPurchase()) {
-      console.log('💎 AdService: User has purchased "No Ads". Ads disabled.');
+      console.log('💎 User has "No Ads" purchase. Ads disabled.');
       this.isInitialized = true;
       return;
     }
 
     try {
-      // Check if running on Android/iOS with Capacitor
       if (typeof window !== 'undefined' && window.Capacitor) {
         const platform = window.Capacitor.getPlatform();
-        console.log('📱 Platform detected:', platform);
+        console.log('📱 Platform:', platform);
         
         if (platform === 'android' || platform === 'ios') {
-          // Set up event listeners first
+          // Set up listeners FIRST
           this.setupEventListeners();
 
-          // Initialize AdMob - PRODUCTION MODE
+          // Initialize AdMob
           await AdMob.initialize({
             requestTrackingAuthorization: false,
             initializeForTesting: false,
           });
 
-          console.log(`✅ AdMob initialized on ${platform} - REAL ADS MODE`);
-          console.log(`📱 Banner ID: ${this.bannerId}`);
-          console.log(`📱 Interstitial ID: ${this.interstitialId}`);
+          console.log('✅ AdMob initialized - REAL ADS MODE');
+          console.log('📱 Banner ID:', this.adConfig.bannerId);
+          console.log('📱 Interstitial ID:', this.adConfig.interstitialId);
+          
           this.isInitialized = true;
           
-          // Small delay to ensure AdMob is fully ready
-          await new Promise(resolve => setTimeout(resolve, 500));
+          // Wait a bit before first ad request
+          await new Promise(resolve => setTimeout(resolve, 1000));
           
-          // Show banner ad
+          // Show banner
           await this.showBanner();
           
-          // Preload first interstitial
+          // Load interstitial
           await this.loadInterstitial();
           
         } else {
-          console.warn('⚠️ AdService: Not on Android/iOS, using mock mode');
+          console.log('⚠️ Not on mobile, mock mode');
           this.showMockBanner();
           this.isInitialized = true;
         }
       } else {
-        console.warn('⚠️ AdService: Not in Capacitor environment, using mock mode');
+        console.log('⚠️ Not in Capacitor, mock mode');
         this.showMockBanner();
         this.isInitialized = true;
       }
     } catch (error) {
-      console.error('❌ AdMob initialization failed:', error);
-      this.initializationAttempts++;
-      
-      // Retry initialization
-      if (this.initializationAttempts < this.maxInitAttempts) {
-        console.log(`🔄 Retrying initialization (attempt ${this.initializationAttempts + 1}/${this.maxInitAttempts})...`);
-        setTimeout(() => this.init(), 2000);
-      } else {
-        // Fallback to mock ads
-        this.showMockBanner();
-        this.isInitialized = true;
-      }
+      console.error('❌ AdMob init error:', error);
+      this.showMockBanner();
+      this.isInitialized = true;
     }
   }
 
   /**
-   * Show banner ad at bottom of screen
+   * Show banner ad
    */
   async showBanner() {
     if (billingService.hasNoAdsPurchase()) {
-      console.log('💎 Banner not shown: User has "No Ads" purchase');
-      this.bannerVisible = false;
-      this.bannerShown = false;
-      this.bannerLoading = false;
+      console.log('💎 No ads - banner skipped');
       return;
     }
 
-    // Don't restart banner request if already loading or shown
+    // Prevent multiple simultaneous requests
     if (this.bannerLoading) {
-      console.log('⏳ Banner already loading, skipping...');
+      console.log('⏳ Banner already loading...');
       return;
     }
 
-    if (this.bannerShown && this.bannerVisible) {
-      console.log('✅ Banner already shown, skipping...');
-      return;
-    }
-
-    console.log('📱 AdService: Attempting to show banner...');
+    console.log('📱 Requesting banner ad...');
     this.bannerLoading = true;
 
     try {
-      // Check if running on Android/iOS
       if (typeof window !== 'undefined' && window.Capacitor) {
         const platform = window.Capacitor.getPlatform();
         if (platform === 'android' || platform === 'ios') {
-          // Only remove banner if not already showing
-          if (!this.bannerShown) {
-            try {
-              await AdMob.removeBanner();
-              console.log('🗑️ Removed existing banner');
-            } catch (e) {
-              // Ignore if banner doesn't exist
-            }
-            
-            // Small delay after removing
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
           
           const options = {
-            adId: this.bannerId,
+            adId: this.adConfig.bannerId,
             adSize: BannerAdSize.BANNER,
             position: BannerAdPosition.BOTTOM_CENTER,
             margin: 0,
             isTesting: false,
           };
 
-          console.log('📱 Banner options:', JSON.stringify(options));
+          console.log('📱 Banner request:', this.adConfig.bannerId);
           await AdMob.showBanner(options);
-          console.log('✅ Banner ad request sent on', platform);
-          // Note: bannerLoading will be set to false in the event listener
+          console.log('✅ Banner request sent');
           return;
         }
       }
       
-      // Fallback to mock for web/browser
-      console.log('🧪 Mock: Banner ad (web/browser mode)');
+      // Web fallback
       this.showMockBanner();
       this.bannerVisible = true;
       this.bannerShown = true;
       this.bannerLoading = false;
     } catch (error) {
-      console.error('❌ Failed to show banner:', error);
+      console.error('❌ Banner error:', error);
+      this.bannerLoading = false;
       this.bannerVisible = false;
       this.bannerShown = false;
-      this.bannerLoading = false;
-      
-      // Retry after a short delay
-      setTimeout(async () => {
-        console.log('🔄 Retrying banner...');
-        this.bannerLoading = true;
-        try {
-          if (typeof window !== 'undefined' && window.Capacitor) {
-            const platform = window.Capacitor.getPlatform();
-            if (platform === 'android' || platform === 'ios') {
-              const options = {
-                adId: this.bannerId,
-                adSize: BannerAdSize.BANNER,
-                position: BannerAdPosition.BOTTOM_CENTER,
-                margin: 0,
-                isTesting: false,
-              };
-              await AdMob.showBanner(options);
-              console.log('✅ Banner ad shown on retry');
-            }
-          }
-        } catch (retryError) {
-          console.error('❌ Banner retry also failed:', retryError);
-          this.bannerLoading = false;
-        }
-      }, 3000);
-      
-      // Show mock banner as fallback for web
-      this.showMockBanner();
     }
   }
 
   /**
-   * Ensure banner is visible (call this to make sure banner stays visible)
+   * Ensure banner is visible
    */
   async ensureBannerVisible() {
     if (billingService.hasNoAdsPurchase()) {
-      // Hide banner if user has no ads
-      if (this.bannerVisible) {
-        await this.hideBanner();
-      }
       return;
     }
 
-    // Check if already initialized
     if (!this.isInitialized) {
-      console.log('🔄 AdService not initialized, initializing now...');
       await this.init();
       return;
     }
 
-    // Skip if banner is already shown or loading
-    if (this.bannerShown || this.bannerLoading) {
-      console.log('📱 Banner already shown/loading, skipping ensureBannerVisible');
-      return;
-    }
-
-    // Check platform
-    if (typeof window !== 'undefined' && window.Capacitor) {
-      const platform = window.Capacitor.getPlatform();
-      if (platform === 'android' || platform === 'ios') {
-        console.log('🔄 Ensuring banner is visible...');
-        await this.showBanner();
-      }
+    // Only request if not already showing/loading
+    if (!this.bannerShown && !this.bannerLoading) {
+      console.log('🔄 Re-requesting banner...');
+      this.bannerRetryCount = 0; // Reset retries when explicitly called
+      await this.showBanner();
     }
   }
 
   /**
-   * Hide banner ad
+   * Hide banner
    */
   async hideBanner() {
     try {
@@ -335,32 +267,23 @@ class AdService {
         const platform = window.Capacitor.getPlatform();
         if (platform === 'android' || platform === 'ios') {
           await AdMob.hideBanner();
-          console.log('✅ Banner ad hidden');
-          this.bannerVisible = false;
-          this.bannerShown = false;
-          this.bannerLoading = false;
-          return;
+          console.log('✅ Banner hidden');
         }
       }
-      
       this.hideMockBanner();
       this.bannerVisible = false;
       this.bannerShown = false;
       this.bannerLoading = false;
     } catch (error) {
-      console.error('❌ Failed to hide banner:', error);
-      this.bannerVisible = false;
-      this.bannerShown = false;
-      this.bannerLoading = false;
+      console.error('❌ Hide banner error:', error);
     }
   }
 
   /**
-   * Load interstitial ad
+   * Load interstitial
    */
   async loadInterstitial() {
     if (billingService.hasNoAdsPurchase()) {
-      console.log('💎 Interstitial not loaded: User has "No Ads" purchase');
       return;
     }
 
@@ -369,54 +292,52 @@ class AdService {
       return;
     }
 
-    console.log('📱 AdService: Loading interstitial...');
+    console.log('📱 Loading interstitial...');
 
     try {
       if (typeof window !== 'undefined' && window.Capacitor) {
         const platform = window.Capacitor.getPlatform();
         if (platform === 'android' || platform === 'ios') {
-          console.log('📱 Loading interstitial with ID:', this.interstitialId);
           await AdMob.prepareInterstitial({
-            adId: this.interstitialId,
+            adId: this.adConfig.interstitialId,
             isTesting: false,
           });
-          console.log('✅ Interstitial ad prepare request sent');
+          console.log('✅ Interstitial prepare request sent');
           return;
         }
       }
       
-      // Fallback for web/browser
-      console.log('🧪 Mock: Interstitial ad loaded (web/browser mode)');
+      // Web fallback
       this.interstitialLoaded = true;
     } catch (error) {
-      console.error('❌ Failed to load interstitial:', error);
+      console.error('❌ Load interstitial error:', error);
       this.interstitialLoaded = false;
     }
   }
 
   /**
-   * Show interstitial ad
+   * Show interstitial
    */
   async showInterstitial() {
     if (billingService.hasNoAdsPurchase()) {
-      console.log('💎 No ads purchased, skipping interstitial');
+      console.log('💎 No ads - interstitial skipped');
       return;
     }
 
-    console.log('📱 AdService: Attempting to show interstitial...');
-    console.log('📊 Interstitial loaded:', this.interstitialLoaded);
+    console.log('📱 Attempting to show interstitial...');
+    console.log('📱 Interstitial loaded:', this.interstitialLoaded);
 
     try {
       if (typeof window !== 'undefined' && window.Capacitor) {
         const platform = window.Capacitor.getPlatform();
         if (platform === 'android' || platform === 'ios') {
           if (!this.interstitialLoaded) {
-            console.log('⚠️ Interstitial not loaded yet, loading now...');
+            console.log('⚠️ Interstitial not loaded, loading now...');
             await this.loadInterstitial();
-            // Wait a bit for it to load
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            // Give it time to load
+            await new Promise(resolve => setTimeout(resolve, 3000));
             if (!this.interstitialLoaded) {
-              console.log('⚠️ Interstitial still not loaded, skipping');
+              console.log('⚠️ Interstitial still not ready');
               return;
             }
           }
@@ -428,87 +349,57 @@ class AdService {
         }
       }
       
-      // Fallback for web/browser
-      console.log('🧪 Mock: Showing interstitial ad (web/browser mode)');
+      // Web fallback
       await this.showMockInterstitial();
       this.interstitialLoaded = false;
-      await this.loadInterstitial();
+      this.loadInterstitial();
     } catch (error) {
-      console.error('❌ Failed to show interstitial:', error);
+      console.error('❌ Show interstitial error:', error);
       this.interstitialLoaded = false;
-      // Reload for next time
       this.loadInterstitial();
     }
   }
 
   /**
-   * Called when a level is completed
-   * Determines if an interstitial ad should be shown
+   * Called when level is completed
    */
   async onLevelCompleted() {
     if (billingService.hasNoAdsPurchase()) {
-      console.log('💎 No ads purchased, skipping ad check');
       return;
     }
-
-    // Ensure banner is still visible
-    await this.ensureBannerVisible();
 
     this.levelsCompletedSinceLastAd++;
     console.log(`📊 Levels since last ad: ${this.levelsCompletedSinceLastAd}/${this.levelsUntilNextAd}`);
 
+    // Try to ensure banner is visible
+    this.bannerRetryCount = 0; // Reset retries on level complete
+    await this.ensureBannerVisible();
+
     if (this.levelsCompletedSinceLastAd >= this.levelsUntilNextAd) {
-      console.log('🎬 Time to show interstitial ad!');
+      console.log('🎬 Time for interstitial!');
       await this.showInterstitial();
       
-      // Reset counter and set new random interval
       this.levelsCompletedSinceLastAd = 0;
       this.levelsUntilNextAd = this.getRandomAdInterval();
-      console.log(`📊 Next ad in ${this.levelsUntilNextAd} levels`);
-      
-      // Ensure banner is visible after interstitial (with delay)
-      setTimeout(() => this.ensureBannerVisible(), 1000);
+      console.log(`📊 Next interstitial in ${this.levelsUntilNextAd} levels`);
     }
   }
 
   /**
-   * Remove ads (called after purchase)
+   * Remove ads after purchase
    */
   async removeAds() {
-    // Only hide if user actually has the purchase
     if (billingService.hasNoAdsPurchase()) {
       console.log('💎 Removing all ads...');
       await this.hideBanner();
-      this.hideMockBanner();
       try {
         await AdMob.removeBanner();
-      } catch (e) {
-        // Ignore
-      }
-    } else {
-      console.warn('⚠️ removeAds called but user has not purchased "No Ads"');
+      } catch (e) {}
     }
   }
 
   /**
-   * Force show banner (for debugging)
-   */
-  async forceShowBanner() {
-    console.log('🔧 Force showing banner...');
-    this.bannerVisible = false;
-    this.bannerShown = false;
-    this.bannerLoading = false;
-    // Remove existing banner first
-    try {
-      await AdMob.removeBanner();
-    } catch (e) {
-      // Ignore
-    }
-    await this.showBanner();
-  }
-
-  /**
-   * Get ad status (for debugging)
+   * Get status for debugging
    */
   getStatus() {
     return {
@@ -516,40 +407,44 @@ class AdService {
       bannerVisible: this.bannerVisible,
       bannerShown: this.bannerShown,
       bannerLoading: this.bannerLoading,
+      bannerRetryCount: this.bannerRetryCount,
       interstitialLoaded: this.interstitialLoaded,
       levelsCompletedSinceLastAd: this.levelsCompletedSinceLastAd,
       levelsUntilNextAd: this.levelsUntilNextAd,
       hasNoAdsPurchase: billingService.hasNoAdsPurchase(),
+      bannerId: this.adConfig.bannerId,
+      interstitialId: this.adConfig.interstitialId,
     };
   }
 
-  // ===== MOCK AD METHODS FOR WEB/DEVELOPMENT =====
+  /**
+   * Force refresh banner
+   */
+  async forceShowBanner() {
+    console.log('🔧 Force refreshing banner...');
+    this.bannerRetryCount = 0;
+    this.bannerLoading = false;
+    this.bannerShown = false;
+    try {
+      await AdMob.removeBanner();
+    } catch (e) {}
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await this.showBanner();
+  }
 
+  // Mock methods for web testing
   showMockBanner() {
     if (typeof document === 'undefined') return;
-    
-    // Remove existing banner
     this.hideMockBanner();
-
     const banner = document.createElement('div');
     banner.id = 'mock-ad-banner';
     banner.style.cssText = `
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      width: 100%;
-      height: 50px;
+      position: fixed; bottom: 0; left: 0; width: 100%; height: 50px;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      z-index: 1000;
-      border-top: 2px solid rgba(255,255,255,0.3);
-      box-shadow: 0 -2px 10px rgba(0,0,0,0.2);
+      color: white; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; z-index: 1000;
     `;
-    banner.innerHTML = '<span>📢 AdMob Banner (Web Mode - Real ads on Android)</span>';
+    banner.innerHTML = '📢 AdMob Banner (Web Mode)';
     document.body.appendChild(banner);
     this.bannerVisible = true;
     this.bannerShown = true;
@@ -563,46 +458,32 @@ class AdService {
 
   async showMockInterstitial() {
     if (typeof document === 'undefined') return;
-
     return new Promise(resolve => {
       const overlay = document.createElement('div');
       overlay.id = 'mock-interstitial';
       overlay.style.cssText = `
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.95);
-        z-index: 9999;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        color: white;
+        position: fixed; inset: 0; background: rgba(0,0,0,0.95); z-index: 9999;
+        display: flex; flex-direction: column; align-items: center; justify-content: center; color: white;
       `;
       overlay.innerHTML = `
         <div style="text-align: center;">
           <div style="font-size: 48px; margin-bottom: 20px;">📺</div>
-          <div style="font-size: 24px; margin-bottom: 10px;">AdMob Interstitial</div>
-          <div style="font-size: 14px; color: #aaa; margin-bottom: 30px;">Real ads will show on Android device</div>
-          <button id="close-ad-btn" style="padding: 12px 24px; background: white; color: black; border: none; border-radius: 8px; cursor: pointer; font-size: 16px; font-weight: bold;">Close Ad</button>
+          <div style="font-size: 24px; margin-bottom: 10px;">Interstitial Ad</div>
+          <div style="font-size: 14px; color: #aaa; margin-bottom: 30px;">Web Mode</div>
+          <button id="close-mock-ad" style="padding: 12px 24px; background: white; color: black; border: none; border-radius: 8px; cursor: pointer;">Close</button>
         </div>
       `;
       document.body.appendChild(overlay);
-
-      // Auto-close after 3 seconds or on click
-      const closeAd = () => {
-        overlay.remove();
-        resolve();
-      };
-
-      document.getElementById('close-ad-btn').onclick = closeAd;
-      setTimeout(closeAd, 3000);
+      const close = () => { overlay.remove(); resolve(); };
+      document.getElementById('close-mock-ad').onclick = close;
+      setTimeout(close, 3000);
     });
   }
 }
 
 export const adService = new AdService();
 
-// Expose to window for debugging
+// Debug access
 if (typeof window !== 'undefined') {
   window.adService = adService;
 }
