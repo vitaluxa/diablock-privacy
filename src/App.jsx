@@ -1,5 +1,5 @@
 import { DebugPanel } from './components/DebugPanel';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { GameBoard } from './components/GameBoard';
 import { GameStats } from './components/GameStats';
 import { WinModal } from './components/WinModal';
@@ -43,6 +43,13 @@ function App() {
   const [showTerms, setShowTerms] = useState(false); // Show terms overlay
   const [showLevelSelect, setShowLevelSelect] = useState(false); // Added
   const [soundEffectsMuted, setSoundEffectsMuted] = useState(false);
+  const [subscriptionStatus, setSubscriptionStatus] = useState({
+    isSubscribed: false,
+    expirationDate: null,
+    priceString: '$5.99/month',
+    isPurchasing: false,
+    isRestoring: false
+  });
 
   // Initialize Firebase (anonymous authentication)
   const firebaseHook = useFirebase();
@@ -50,13 +57,92 @@ function App() {
   // Initialize background music
   const musicHook = useBackgroundMusic();
 
+  // Update subscription status UI
+  const updateSubscriptionStatus = useCallback(async () => {
+    try {
+      const isSubscribed = billingService.hasNoAdsSubscription();
+      const expirationDate = billingService.getSubscriptionExpiration();
+      const priceString = billingService.getPriceString();
+      
+      // Try to get real price from store
+      try {
+        const productDetails = await billingService.getProductDetails();
+        if (productDetails && productDetails.priceString) {
+          setSubscriptionStatus({
+            isSubscribed,
+            expirationDate: expirationDate ? billingService.getFormattedExpirationDate() : null,
+            priceString: productDetails.priceString,
+            isPurchasing: false,
+            isRestoring: false
+          });
+        } else {
+          setSubscriptionStatus(prev => ({
+            ...prev,
+            isSubscribed,
+            expirationDate: expirationDate ? billingService.getFormattedExpirationDate() : null,
+            priceString
+          }));
+        }
+      } catch (err) {
+        // Fallback to cached price
+        setSubscriptionStatus(prev => ({
+          ...prev,
+          isSubscribed,
+          expirationDate: expirationDate ? billingService.getFormattedExpirationDate() : null,
+          priceString
+        }));
+      }
+    } catch (err) {
+      console.error('Error updating subscription status:', err);
+    }
+  }, []);
+
   // Initialize Ads, Billing, and Sound Effects (with error handling)
   useEffect(() => {
+    let statusCheckInterval = null;
+    
     async function initializeServices() {
       // Initialize billing first to check subscription status
       try {
         await billingService.initialize();
         console.log('💰 Billing service initialized, subscription active:', billingService.hasNoAdsSubscription());
+        
+        // Update subscription status UI
+        await updateSubscriptionStatus();
+        
+        // Set up periodic subscription status checks (every 5 minutes when app is active)
+        // This ensures subscription expiration is detected even if app stays open
+        statusCheckInterval = setInterval(async () => {
+          try {
+            const wasSubscribed = billingService.hasNoAdsSubscription();
+            await billingService.checkSubscriptionStatus();
+            const isSubscribed = billingService.hasNoAdsSubscription();
+            
+            if (wasSubscribed !== isSubscribed) {
+              // Subscription status changed - update UI and ads
+              await updateSubscriptionStatus();
+              
+              if (!isSubscribed) {
+                // Subscription expired - re-enable ads
+                try {
+                  await adService.init();
+                  await adService.ensureBannerVisible();
+                } catch (err) {
+                  console.error('Failed to re-enable ads:', err);
+                }
+              } else {
+                // Subscription activated - remove ads
+                try {
+                  await adService.removeAds();
+                } catch (err) {
+                  console.error('Failed to remove ads:', err);
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Periodic subscription check error:', err);
+          }
+        }, 5 * 60 * 1000); // Check every 5 minutes
       } catch (err) {
         console.error('Billing service init failed:', err);
       }
@@ -93,7 +179,14 @@ function App() {
     }
     
     initializeServices();
-  }, []);
+    
+    // Cleanup interval on unmount
+    return () => {
+      if (statusCheckInterval) {
+        clearInterval(statusCheckInterval);
+      }
+    };
+  }, [updateSubscriptionStatus]);
 
   const {
     blocks,
@@ -177,16 +270,92 @@ function App() {
       return;
     }
     
-    const result = await billingService.purchaseSubscription();
+    console.log('🛒 User clicked "Remove Ads" button');
+    setSubscriptionStatus(prev => ({ ...prev, isPurchasing: true }));
     
-    if (result.success) {
-      // Remove ads from UI
-      await adService.removeAds();
-      alert('Thank you for subscribing! Ads have been removed.');
-    } else {
-      if (result.error && result.error !== 'User cancelled') {
-        alert('Subscription failed: ' + result.error);
+    try {
+      const result = await billingService.purchaseSubscription();
+      console.log('🛒 Purchase result received:', result);
+      
+      if (result.success) {
+        // Check if this was a mock purchase
+        if (result.mock) {
+          alert('Mock subscription activated (web/development mode). On device, this will open Google Play purchase dialog.');
+        } else {
+          alert('Thank you for subscribing! Ads have been removed.');
+        }
+        
+        // Remove ads from UI immediately
+        try {
+          await adService.removeAds();
+          console.log('✅ Ads removed from UI');
+        } catch (err) {
+          console.error('❌ Error removing ads:', err);
+        }
+        
+        // Refresh subscription status from billing service (ensures sync)
+        try {
+          await billingService.checkSubscriptionStatus();
+          console.log('✅ Subscription status verified');
+        } catch (err) {
+          console.error('❌ Error checking subscription status:', err);
+        }
+        
+        // Update subscription status UI
+        await updateSubscriptionStatus();
+        
+      } else {
+        // Show error only if user didn't cancel
+        if (result.error && result.error !== 'User cancelled') {
+          console.error('❌ Purchase failed:', result.error);
+          alert('Subscription failed: ' + result.error + '\n\nCheck console logs for details.');
+        } else if (result.error === 'User cancelled') {
+          console.log('ℹ️ User cancelled purchase');
+          // Don't show alert for user cancellation
+        }
       }
+    } catch (error) {
+      console.error('❌ Purchase error (outer catch):', error);
+      alert('Subscription failed: ' + (error.message || 'Unknown error') + '\n\nCheck console logs for details.');
+    } finally {
+      setSubscriptionStatus(prev => ({ ...prev, isPurchasing: false }));
+    }
+  };
+
+  const handleRestorePurchases = async () => {
+    setSubscriptionStatus(prev => ({ ...prev, isRestoring: true }));
+    
+    try {
+      const restored = await billingService.restorePurchases();
+      
+      if (restored) {
+        // Update subscription status
+        await updateSubscriptionStatus();
+        
+        // Update ads based on subscription status
+        if (billingService.hasNoAdsSubscription()) {
+          await adService.removeAds();
+          alert('Purchases restored! Your subscription is active.');
+        } else {
+          alert('No active subscriptions found.');
+        }
+      } else {
+        alert('No active subscriptions found to restore.');
+      }
+    } catch (error) {
+      console.error('Restore error:', error);
+      alert('Failed to restore purchases: ' + (error.message || 'Unknown error'));
+    } finally {
+      setSubscriptionStatus(prev => ({ ...prev, isRestoring: false }));
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    try {
+      await billingService.manageSubscriptions();
+    } catch (error) {
+      console.error('Manage subscription error:', error);
+      alert('Failed to open subscription management: ' + (error.message || 'Unknown error'));
     }
   };
 
@@ -226,8 +395,11 @@ function App() {
   }, [musicHook]);
 
   // Pause music when app goes to background, resume when foreground
+  // Also check subscription status when app comes to foreground
   useEffect(() => {
-    const handleVisibilityChange = () => {
+    let appStateListener = null;
+    
+    const handleVisibilityChange = async () => {
       if (document.hidden) {
         // App went to background - pause music
         if (musicHook && musicHook.isPlaying) {
@@ -238,6 +410,37 @@ function App() {
         if (musicHook && !musicHook.isMuted && !musicHook.isPlaying) {
           musicHook.startMusicOnInteraction();
         }
+        
+        // Check subscription status when app comes to foreground
+        try {
+          const wasSubscribed = billingService.hasNoAdsSubscription();
+          await billingService.checkSubscriptionStatus();
+          const isSubscribed = billingService.hasNoAdsSubscription();
+          
+          // If subscription status changed, update ads accordingly
+          if (wasSubscribed !== isSubscribed) {
+            if (!isSubscribed) {
+              // Subscription expired - re-enable ads
+              try {
+                await adService.init();
+                await adService.ensureBannerVisible();
+                console.log('📢 Ads re-enabled due to subscription expiration');
+              } catch (err) {
+                console.error('Failed to re-enable ads:', err);
+              }
+            } else {
+              // Subscription activated - remove ads
+              try {
+                await adService.removeAds();
+                console.log('🚫 Ads removed due to active subscription');
+              } catch (err) {
+                console.error('Failed to remove ads:', err);
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Error checking subscription status on foreground:', err);
+        }
       }
     };
     
@@ -247,7 +450,7 @@ function App() {
     if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.Plugins) {
       const { App } = window.Capacitor.Plugins;
       if (App) {
-        const listener = App.addListener('appStateChange', ({ isActive }) => {
+        appStateListener = App.addListener('appStateChange', async ({ isActive }) => {
           if (!isActive) {
             // App went to background
             if (musicHook && musicHook.isPlaying) {
@@ -258,20 +461,51 @@ function App() {
             if (musicHook && !musicHook.isMuted && !musicHook.isPlaying) {
               musicHook.startMusicOnInteraction();
             }
+            
+            // Check subscription status when app comes to foreground
+            try {
+              const wasSubscribed = billingService.hasNoAdsSubscription();
+              await billingService.checkSubscriptionStatus();
+              const isSubscribed = billingService.hasNoAdsSubscription();
+              
+              // If subscription status changed, update ads accordingly
+              if (wasSubscribed !== isSubscribed) {
+                if (!isSubscribed) {
+                  // Subscription expired - re-enable ads
+                  try {
+                    await adService.init();
+                    await adService.ensureBannerVisible();
+                    console.log('📢 Ads re-enabled due to subscription expiration');
+                  } catch (err) {
+                    console.error('Failed to re-enable ads:', err);
+                  }
+                } else {
+                  // Subscription activated - remove ads
+                  try {
+                    await adService.removeAds();
+                    console.log('🚫 Ads removed due to active subscription');
+                  } catch (err) {
+                    console.error('Failed to remove ads:', err);
+                  }
+                }
+                // Update UI status
+                await updateSubscriptionStatus();
+              }
+            } catch (err) {
+              console.error('Error checking subscription status on foreground:', err);
+            }
           }
         });
-        
-        return () => {
-          document.removeEventListener('visibilitychange', handleVisibilityChange);
-          listener.remove();
-        };
       }
     }
     
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (appStateListener) {
+        appStateListener.remove();
+      }
     };
-  }, [musicHook]);
+  }, [musicHook, updateSubscriptionStatus]);
 
   return (
     <ErrorBoundary>
@@ -338,14 +572,37 @@ function App() {
                 📊
               </button>
               
-              {/* No Ads Button */}
-              <button
-                onClick={handlePurchaseNoAds}
-                className="px-2 md:px-3 py-1.5 md:py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
-                title="Remove Ads"
-              >
-                🚫
-              </button>
+              {/* Subscription Buttons */}
+              {subscriptionStatus.isSubscribed ? (
+                <>
+                  <button
+                    onClick={handleManageSubscription}
+                    className="px-2 md:px-3 py-1.5 md:py-2 bg-green-600 hover:bg-green-700 text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                    title={`No Ads Active${subscriptionStatus.expirationDate ? ` until ${subscriptionStatus.expirationDate}` : ''}`}
+                  >
+                    ✓ No Ads
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={handlePurchaseNoAds}
+                    disabled={subscriptionStatus.isPurchasing}
+                    className="px-2 md:px-3 py-1.5 md:py-2 bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                    title={`Remove Ads - ${subscriptionStatus.priceString}`}
+                  >
+                    {subscriptionStatus.isPurchasing ? '...' : '🚫'}
+                  </button>
+                  <button
+                    onClick={handleRestorePurchases}
+                    disabled={subscriptionStatus.isRestoring}
+                    className="px-2 md:px-3 py-1.5 md:py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs md:text-sm font-semibold rounded-lg transition-colors"
+                    title="Restore Purchases"
+                  >
+                    {subscriptionStatus.isRestoring ? '...' : '↻'}
+                  </button>
+                </>
+              )}
 
               {/* Combined Sound Settings Button */}
               <SoundSettingsButton

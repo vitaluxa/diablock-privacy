@@ -1,0 +1,57 @@
+===== RELEASE NOTES (What's New) =====
+
+<en-GB>
+Welcome to Dia Block v1.3.1!
+• Bug fixes and performance improvements
+• Enhanced gameplay experience
+• Improved stability
+</en-GB>
+
+<en-US>
+Welcome to Dia Block v1.3.1!
+• Bug fixes and performance improvements
+• Enhanced gameplay experience
+• Improved stability
+</en-US>
+
+===== FULL DESCRIPTION =====
+
+<en-GB>
+Welcome to Dia Block!
+
+Move blocks to help the red block reach the exit. Challenge yourself with Easy, Medium, or Hard difficulty levels. Every puzzle is guaranteed solvable!
+
+Features:
+• Smooth drag-and-drop gameplay
+• Multiple difficulty levels
+• Dynamic scoring system
+• Beautiful modern interface
+• 100+ handcrafted puzzles
+• Original soundtrack with 5 music tracks
+• Global leaderboard - compete worldwide
+• Level select with progress tracking
+• Works offline - play anywhere
+• No account required to play
+
+Start your puzzle adventure today!
+</en-GB>
+
+<en-US>
+Welcome to Dia Block!
+
+Move blocks to help the red block reach the exit. Challenge yourself with Easy, Medium, or Hard difficulty levels. Every puzzle is guaranteed solvable!
+
+Features:
+• Smooth drag-and-drop gameplay
+• Multiple difficulty levels
+• Dynamic scoring system
+• Beautiful modern interface
+• 100+ handcrafted puzzles
+• Original soundtrack with 5 music tracks
+• Global leaderboard - compete worldwide
+• Level select with progress tracking
+• Works offline - play anywhere
+• No account required to play
+
+Start your puzzle adventure today!
+</en-US>
