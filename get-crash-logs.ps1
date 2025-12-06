@@ -122,3 +122,4 @@ Write-Host "  - $logFile" -ForegroundColor White
 Write-Host "  - $crashFile" -ForegroundColor White
 Write-Host ""
 
+

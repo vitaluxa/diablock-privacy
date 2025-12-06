@@ -96,3 +96,4 @@ if ($response -eq "Y" -or $response -eq "y") {
     & $adbPath logcat | Select-String -Pattern "chromium|WebView|AndroidRuntime|DiaBlock|com.diablock"
 }
 
+

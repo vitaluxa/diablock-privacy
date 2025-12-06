@@ -496,7 +496,7 @@ class AdService {
     const banner = document.createElement('div');
     banner.id = 'mock-ad-banner';
     banner.style.cssText = `
-      position: fixed; bottom: 0; left: 0; width: 100%; height: 50px;
+      position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; height: 50px;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       color: white; display: flex; align-items: center; justify-content: center;
       font-size: 12px; z-index: 1000;

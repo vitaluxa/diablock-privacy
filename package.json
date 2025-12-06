@@ -26,7 +26,9 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
     "autoprefixer": "^10.4.20",
+    "patch-package": "^8.0.1",
     "postcss": "^8.4.49",
+    "postinstall-postinstall": "^2.1.0",
     "sharp": "^0.34.5",
     "tailwindcss": "^3.4.15",
     "vite": "^5.4.10"

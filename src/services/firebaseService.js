@@ -218,13 +218,30 @@ class FirebaseService {
     }
 
     try {
+      // Convert completedLevels Set to array for Firebase storage
+      const completedLevelsArray = gameState.completedLevels 
+        ? (Array.isArray(gameState.completedLevels) 
+            ? gameState.completedLevels 
+            : [...gameState.completedLevels])
+        : [];
+
+      console.log('💾 Saving to Firebase:', {
+        levelNumber: gameState.levelNumber,
+        globalScore: gameState.globalScore,
+        completedLevels: completedLevelsArray,
+        completedLevelsType: Array.isArray(gameState.completedLevels) ? 'array' : (gameState.completedLevels instanceof Set ? 'Set' : typeof gameState.completedLevels)
+      });
+
       await setDoc(doc(this.db, 'users', this.user.uid), {
         username: this.userName,
         lastPlayed: new Date(),
         level: gameState.levelNumber || 1,
         globalScore: gameState.globalScore || 0,
         achievements: gameState.achievements || [],
+        completedLevels: completedLevelsArray,
       }, { merge: true });
+
+      console.log('✅ Saved to Firebase successfully');
 
       // Also save to localStorage as backup
       try {
@@ -284,11 +301,34 @@ class FirebaseService {
         // Ensure achievements is an array
         const achievements = Array.isArray(data.achievements) ? data.achievements : [];
         
+        // Load and validate completedLevels (convert array to Set for return, but keep as array in gameState for JSON)
+        let completedLevelsArray = [];
+        if (data.completedLevels !== undefined) {
+          if (Array.isArray(data.completedLevels)) {
+            // Validate that all items are numbers
+            completedLevelsArray = data.completedLevels.filter(level => 
+              typeof level === 'number' && !isNaN(level) && level >= 1 && level <= 10000
+            );
+            console.log('📥 Loaded completedLevels from Firebase:', completedLevelsArray);
+          } else {
+            console.warn('⚠️ completedLevels in Firebase is not an array:', data.completedLevels, typeof data.completedLevels);
+          }
+        } else {
+          console.log('ℹ️ No completedLevels field in Firebase data');
+        }
+        
         const gameState = {
           levelNumber,
           globalScore,
           achievements,
+          completedLevels: completedLevelsArray,
         };
+        
+        console.log('📥 Loaded game state from Firebase:', {
+          levelNumber: gameState.levelNumber,
+          globalScore: gameState.globalScore,
+          completedLevels: gameState.completedLevels
+        });
         
         // Also save to localStorage as backup
         try {

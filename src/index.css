@@ -61,4 +61,17 @@ code {
   border-radius: 6px 6px 2px 2px;
 }
 
+/* AdMob Banner Centering */
+/* The Capacitor AdMob plugin renders native views, but we can add CSS for any web wrappers */
+#banner-container,
+.admob-banner,
+[data-admob-banner] {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  width: 100% !important;
+}
+
 

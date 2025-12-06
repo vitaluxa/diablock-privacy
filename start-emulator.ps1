@@ -45,3 +45,4 @@ Write-Host "Wait for it to fully boot, then you can install your APK with:" -For
 Write-Host "  adb install apk\dia-block-game-release.aab" -ForegroundColor White
 Write-Host ""
 
+

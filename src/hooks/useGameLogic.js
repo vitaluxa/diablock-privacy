@@ -63,6 +63,47 @@ export function useGameLogic(firebaseHook = null) {
             } else {
               setGlobalScore(0); // Default to 0 if invalid
             }
+            
+            // Load completedLevels from Firebase (convert array to Set)
+            let loadedCompletedLevels = null;
+            if (cloudState.completedLevels !== undefined) {
+              if (Array.isArray(cloudState.completedLevels) && cloudState.completedLevels.length > 0) {
+                // Validate that all items are numbers before converting to Set
+                const validLevels = cloudState.completedLevels.filter(level => 
+                  typeof level === 'number' && !isNaN(level) && level >= 1 && level <= 10000
+                );
+                console.log('📥 Loading completedLevels from Firebase:', validLevels);
+                loadedCompletedLevels = new Set(validLevels);
+                setCompletedLevels(loadedCompletedLevels);
+                console.log('✅ Completed levels loaded from Firebase:', [...loadedCompletedLevels]);
+              } else {
+                console.warn('⚠️ completedLevels from Firebase is not an array or is empty:', cloudState.completedLevels);
+              }
+            } else {
+              console.log('ℹ️ No completedLevels found in Firebase cloud state, checking localStorage...');
+            }
+            
+            // If Firebase doesn't have completedLevels, try localStorage as fallback
+            if (!loadedCompletedLevels) {
+              try {
+                const savedCompletedLevels = localStorage.getItem('diaBlockCompletedLevels');
+                if (savedCompletedLevels) {
+                  const parsedLevels = JSON.parse(savedCompletedLevels);
+                  if (Array.isArray(parsedLevels) && parsedLevels.length > 0) {
+                    const validLevels = parsedLevels.filter(level => 
+                      typeof level === 'number' && !isNaN(level) && level >= 1 && level <= 10000
+                    );
+                    console.log('📥 Loading completedLevels from localStorage (Firebase fallback):', validLevels);
+                    loadedCompletedLevels = new Set(validLevels);
+                    setCompletedLevels(loadedCompletedLevels);
+                    console.log('✅ Completed levels loaded from localStorage:', [...loadedCompletedLevels]);
+                  }
+                }
+              } catch (e) {
+                console.error('Failed to parse saved completed levels from localStorage:', e);
+              }
+            }
+            
             return;
           }
         } catch (error) {
@@ -76,6 +117,7 @@ export function useGameLogic(firebaseHook = null) {
         const savedLevel = localStorage.getItem('diaBlockLevel');
         const savedMaxLevel = localStorage.getItem('diaBlockMaxLevel');
         const savedLevelScores = localStorage.getItem('diaBlockLevelScores');
+        const savedCompletedLevels = localStorage.getItem('diaBlockCompletedLevels');
         
         if (savedScore !== null && savedScore !== undefined) {
           const parsedScore = parseInt(savedScore, 10);
@@ -114,6 +156,26 @@ export function useGameLogic(firebaseHook = null) {
           } catch (e) {
             console.error('Failed to parse saved level scores:', e);
           }
+        }
+
+        // Load completedLevels from localStorage (convert array to Set)
+        if (savedCompletedLevels) {
+          try {
+            const parsedLevels = JSON.parse(savedCompletedLevels);
+            if (Array.isArray(parsedLevels)) {
+              // Validate that all items are numbers before converting to Set
+              const validLevels = parsedLevels.filter(level => 
+                typeof level === 'number' && !isNaN(level) && level >= 1 && level <= 10000
+              );
+              console.log('📥 Loading completedLevels from localStorage:', validLevels);
+              setCompletedLevels(new Set(validLevels));
+              console.log('✅ Completed levels loaded from localStorage:', [...new Set(validLevels)]);
+            }
+          } catch (e) {
+            console.error('Failed to parse saved completed levels:', e);
+          }
+        } else {
+          console.log('ℹ️ No completedLevels found in localStorage');
         }
       } catch (error) {
         console.error('Failed to load from localStorage:', error);
@@ -284,45 +346,50 @@ export function useGameLogic(firebaseHook = null) {
         isSavingRef.current = true; // Prevent other saves
         hasSavedForWin.current = true; // Mark as saved immediately
         
-        // Add current level to completed levels and calculate next unplayed level
-        let nextLevelNumber = 1;
-        setCompletedLevels(prev => {
-          const newCompleted = new Set(prev);
-          newCompleted.add(levelNumber);
-          
-          // Calculate next unplayed level (lowest level not in completed set)
-          let nextUnplayed = 1;
-          while (newCompleted.has(nextUnplayed)) {
-            nextUnplayed++;
-          }
-          nextLevelNumber = nextUnplayed;
-          nextLevelRef.current = nextUnplayed; // Update ref with next unplayed level
-          
-          // Save to localStorage
-          try {
-            localStorage.setItem('diaBlockCompletedLevels', JSON.stringify([...newCompleted]));
-          } catch (error) {
-            if (error.name === 'QuotaExceededError') {
-              console.warn('localStorage quota exceeded for completed levels');
-            } else {
-              console.error('Failed to save completed levels:', error);
-            }
-          }
-          
-          return newCompleted;
-        });
+        // Calculate updated completed levels directly (add current level)
+        const newCompleted = new Set(completedLevels);
+        newCompleted.add(levelNumber);
         
-        // Save to Firebase (outside setState callback)
+        // Calculate next unplayed level (lowest level not in completed set)
+        let nextUnplayed = 1;
+        while (newCompleted.has(nextUnplayed)) {
+          nextUnplayed++;
+        }
+        const nextLevelNumber = nextUnplayed;
+        nextLevelRef.current = nextUnplayed; // Update ref with next unplayed level
+        
+        // Update state
+        setCompletedLevels(newCompleted);
+        
+        // Save to localStorage
+        try {
+          localStorage.setItem('diaBlockCompletedLevels', JSON.stringify([...newCompleted]));
+        } catch (error) {
+          if (error.name === 'QuotaExceededError') {
+            console.warn('localStorage quota exceeded for completed levels');
+          } else {
+            console.error('Failed to save completed levels:', error);
+          }
+        }
+        
+        // Save to Firebase with the updated completed levels
         if (firebaseHook && firebaseHook.isInitialized) {
           try {
-            console.log('☁️ Attempting to save win state to cloud...', { nextLevelNumber, globalScore });
+            console.log('☁️ Attempting to save win state to cloud...', { 
+              nextLevelNumber, 
+              globalScore, 
+              completedLevels: [...newCompleted] 
+            });
             // Save game state with next level number (so next start will be from next level)
             await firebaseHook.saveGameState({
               levelNumber: nextLevelNumber, // Save next unplayed level, not current completed one
               globalScore,
               achievements: [], // Can add achievements later
+              completedLevels: newCompleted, // Use the calculated Set directly
             });
-            console.log('✅ Win state saved to cloud successfully');
+            console.log('✅ Win state saved to cloud successfully', { 
+              savedCompletedLevels: [...newCompleted] 
+            });
             
             // Also submit score to leaderboard immediately
             if (globalScore > 0) {
