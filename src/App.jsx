@@ -50,20 +50,35 @@ function App() {
   // Initialize background music
   const musicHook = useBackgroundMusic();
 
-  // Initialize Ads and Sound Effects (with error handling)
+  // Initialize Ads, Billing, and Sound Effects (with error handling)
   useEffect(() => {
     async function initializeServices() {
+      // Initialize billing first to check subscription status
       try {
-        await adService.init();
-        // Ensure banner is visible after initialization
-        await adService.ensureBannerVisible();
+        await billingService.initialize();
+        console.log('💰 Billing service initialized, subscription active:', billingService.hasNoAdsSubscription());
+      } catch (err) {
+        console.error('Billing service init failed:', err);
+      }
+      
+      // Initialize ads only if user doesn't have active subscription
+      try {
+        if (!billingService.hasNoAdsSubscription()) {
+          await adService.init();
+          // Ensure banner is visible after initialization
+          await adService.ensureBannerVisible();
+        } else {
+          console.log('🚫 Skipping ad initialization - user has active subscription');
+        }
       } catch (err) {
         console.error('Ad service init failed:', err);
         // Don't crash if ads fail to initialize, but try to show banner anyway
-        try {
-          await adService.ensureBannerVisible();
-        } catch (bannerErr) {
-          console.error('Failed to show banner:', bannerErr);
+        if (!billingService.hasNoAdsSubscription()) {
+          try {
+            await adService.ensureBannerVisible();
+          } catch (bannerErr) {
+            console.error('Failed to show banner:', bannerErr);
+          }
         }
       }
       
@@ -122,16 +137,21 @@ function App() {
   const handleNextLevel = async () => {
     setShowWinModal(false);
     
-    // Call ad service to check if interstitial should be shown
-    // This uses the new 5-10 level random frequency logic
-    await adService.onLevelCompleted();
+    // Only show ads if user doesn't have active subscription
+    if (!billingService.hasNoAdsSubscription()) {
+      // Call ad service to check if interstitial should be shown
+      // This uses the new 5-10 level random frequency logic
+      await adService.onLevelCompleted();
+    }
 
     // Don't add +1 here because nextLevelRef.current already has the correct next level
     // from the win save logic (it was set to levelNumber + 1 when the level was won)
     nextLevel(); // Changed from generateLevel(false, levelNumber, levelNumber);
     
-    // Ensure banner stays visible after level transition
-    await adService.ensureBannerVisible();
+    // Ensure banner stays visible after level transition (only if no subscription)
+    if (!billingService.hasNoAdsSubscription()) {
+      await adService.ensureBannerVisible();
+    }
   };
 
   const handleReplayLevel = () => { // Added
@@ -151,15 +171,21 @@ function App() {
   };
 
   const handlePurchaseNoAds = async () => {
-    const result = await billingService.purchaseNoAds();
+    // Check if already subscribed
+    if (billingService.hasNoAdsSubscription()) {
+      alert('You already have an active No Ads subscription!');
+      return;
+    }
+    
+    const result = await billingService.purchaseSubscription();
     
     if (result.success) {
       // Remove ads from UI
       await adService.removeAds();
-      alert('Thank you! Ads have been removed.');
+      alert('Thank you for subscribing! Ads have been removed.');
     } else {
       if (result.error && result.error !== 'User cancelled') {
-        alert('Purchase failed: ' + result.error);
+        alert('Subscription failed: ' + result.error);
       }
     }
   };

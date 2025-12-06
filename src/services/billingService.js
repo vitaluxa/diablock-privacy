@@ -1,20 +1,28 @@
 /**
  * Google Play Billing Service
- * Handles in-app purchases for "No Ads" product
+ * Handles in-app subscriptions for "No Ads" using @capgo/native-purchases
+ * 
+ * Subscription: $5.99/month for ad-free experience
  */
 
-// Import will work once @capacitor/in-app-purchases is installed
-// import { InAppPurchase2 } from '@capacitor/in-app-purchases';
+import { NativePurchases, PURCHASE_TYPE } from '@capgo/native-purchases';
+import { Capacitor } from '@capacitor/core';
 
 class BillingService {
   constructor() {
     this.isInitialized = false;
-    this.hasPurchasedNoAds = false;
-    this.productId = 'no_ads'; // Must match Google Play Console product ID
+    this.hasActiveSubscription = false;
     
-    // Check localStorage for purchase status
-    const purchased = localStorage.getItem('diaBlockNoAdsPurchased');
-    this.hasPurchasedNoAds = purchased === 'true';
+    // Subscription product configuration
+    // These IDs must match what you create in Google Play Console
+    this.productId = 'no_ads_monthly';        // Product ID in Google Play Console
+    this.planId = 'monthly-plan';             // Base Plan ID in Google Play Console (required for Android subscriptions)
+    this.priceString = '$5.99/month';         // Display price (will be updated from store)
+    
+    // Check localStorage for cached subscription status (quick UI update)
+    // Real status will be verified when billing initializes
+    const cachedStatus = localStorage.getItem('diaBlockSubscriptionActive');
+    this.hasActiveSubscription = cachedStatus === 'true';
   }
 
   /**
@@ -26,117 +34,211 @@ class BillingService {
     console.log('💰 BillingService: Initializing...');
 
     try {
-      // Check if running on Android with Capacitor
-      if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.getPlatform() === 'android') {
-        // Initialize In-App Purchases plugin
-        // Uncomment when plugin is installed:
-        /*
-        await InAppPurchase2.initialize({
-          products: [
-            {
-              id: this.productId,
-              type: 'non-consumable'
-            }
-          ]
-        });
-        */
+      const platform = Capacitor.getPlatform();
+      
+      if (platform === 'android' || platform === 'ios') {
+        // Check if billing is supported on this device
+        const { isBillingSupported } = await NativePurchases.isBillingSupported();
+        
+        if (!isBillingSupported) {
+          console.warn('⚠️ BillingService: Billing not supported on this device');
+          this.isInitialized = true;
+          return true;
+        }
 
-        // Restore purchases (check if user already bought)
-        await this.restorePurchases();
+        console.log('✅ BillingService: Billing is supported');
+
+        // Restore/verify any existing subscriptions
+        await this.checkSubscriptionStatus();
         
         console.log('✅ BillingService: Initialized');
         this.isInitialized = true;
         return true;
       } else {
-        console.warn('⚠️ BillingService: Not on Android, using mock mode');
+        console.warn('⚠️ BillingService: Not on mobile platform, using mock mode');
         this.isInitialized = true;
         return true;
       }
     } catch (error) {
       console.error('❌ BillingService: Initialization failed:', error);
+      // Don't block app if billing fails to initialize
+      this.isInitialized = true;
       return false;
     }
   }
 
   /**
-   * Purchase "No Ads" product
+   * Get subscription product details from the store
    */
-  async purchaseNoAds() {
-    console.log('💰 BillingService: Starting purchase flow...');
-
-    try {
-      // Check if running on Android
-      if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.getPlatform() === 'android') {
-        // Uncomment when plugin is installed:
-        /*
-        const result = await InAppPurchase2.purchase({
-          productId: this.productId
+  async getProductDetails() {
+    const platform = Capacitor.getPlatform();
+    
+    if (platform === 'android' || platform === 'ios') {
+      try {
+        const { product } = await NativePurchases.getProduct({
+          productIdentifier: this.productId,
+          productType: PURCHASE_TYPE.SUBS
         });
 
-        if (result.success) {
-          console.log('✅ Purchase successful!');
-          this.hasPurchasedNoAds = true;
-          localStorage.setItem('diaBlockNoAdsPurchased', 'true');
-          return { success: true };
-        } else {
-          console.log('❌ Purchase failed or cancelled');
-          return { success: false, error: 'Purchase cancelled' };
+        if (product) {
+          console.log('📦 Product details:', product);
+          // Update price string from store (required by Apple - no hardcoded prices!)
+          this.priceString = product.priceString || this.priceString;
+          return {
+            id: product.identifier,
+            title: product.title || 'No Ads Subscription',
+            description: product.description || 'Remove all advertisements',
+            priceString: product.priceString,
+            price: product.price,
+            currency: product.currencyCode
+          };
         }
-        */
+      } catch (error) {
+        console.error('❌ Error getting product details:', error);
+      }
+    }
 
-        // Mock for development
-        console.log('🧪 Mock purchase (plugin not installed yet)');
-        this.hasPurchasedNoAds = true;
-        localStorage.setItem('diaBlockNoAdsPurchased', 'true');
-        return { success: true };
+    // Return mock/fallback product details
+    return {
+      id: this.productId,
+      title: 'No Ads Subscription',
+      description: 'Remove all advertisements from the game. Cancel anytime.',
+      priceString: this.priceString,
+      price: 5.99,
+      currency: 'USD'
+    };
+  }
+
+  /**
+   * Purchase "No Ads" subscription
+   */
+  async purchaseSubscription() {
+    console.log('💰 BillingService: Starting subscription purchase flow...');
+
+    try {
+      const platform = Capacitor.getPlatform();
+      
+      if (platform === 'android' || platform === 'ios') {
+        // Real purchase flow
+        const purchaseOptions = {
+          productIdentifier: this.productId,
+          productType: PURCHASE_TYPE.SUBS,
+          quantity: 1
+        };
+
+        // Android subscriptions require planIdentifier
+        if (platform === 'android') {
+          purchaseOptions.planIdentifier = this.planId;
+        }
+
+        console.log('📤 Initiating purchase with options:', purchaseOptions);
+        
+        const result = await NativePurchases.purchaseProduct(purchaseOptions);
+        
+        console.log('📥 Purchase result:', result);
+        
+        if (result && result.transactionId) {
+          console.log('✅ Subscription purchase successful! Transaction:', result.transactionId);
+          this.hasActiveSubscription = true;
+          localStorage.setItem('diaBlockSubscriptionActive', 'true');
+          localStorage.setItem('diaBlockLastTransactionId', result.transactionId);
+          return { success: true, transactionId: result.transactionId };
+        } else {
+          console.log('❌ Purchase result invalid');
+          return { success: false, error: 'Purchase failed' };
+        }
       } else {
-        // Web/development mode - mock purchase
-        console.log('🧪 Mock purchase for web');
-        const confirmed = confirm('Purchase "No Ads" for $2.99?');
+        // Web/development mode - mock purchase with confirmation
+        console.log('🧪 Mock purchase for web/development');
+        const confirmed = confirm(`Subscribe to "No Ads" for ${this.priceString}?\n\nThis will remove all advertisements from the game.`);
         if (confirmed) {
-          this.hasPurchasedNoAds = true;
-          localStorage.setItem('diaBlockNoAdsPurchased', 'true');
+          this.hasActiveSubscription = true;
+          localStorage.setItem('diaBlockSubscriptionActive', 'true');
           return { success: true };
         }
         return { success: false, error: 'User cancelled' };
       }
     } catch (error) {
       console.error('❌ Purchase error:', error);
-      return { success: false, error: error.message };
+      
+      // Check for user cancellation
+      if (error.message && (
+        error.message.includes('cancelled') || 
+        error.message.includes('canceled') ||
+        error.message.includes('User cancelled')
+      )) {
+        return { success: false, error: 'User cancelled' };
+      }
+      
+      return { success: false, error: error.message || 'Purchase failed' };
     }
   }
 
   /**
-   * Restore previous purchases
+   * Check current subscription status
+   */
+  async checkSubscriptionStatus() {
+    console.log('💰 BillingService: Checking subscription status...');
+
+    try {
+      const platform = Capacitor.getPlatform();
+      
+      if (platform === 'android' || platform === 'ios') {
+        // Restore purchases to get current subscription status
+        await NativePurchases.restorePurchases();
+        
+        // After restore, the plugin updates the purchase state
+        // We need to query for active subscriptions
+        // For now, we'll keep the localStorage check as fallback
+        const cachedStatus = localStorage.getItem('diaBlockSubscriptionActive');
+        if (cachedStatus === 'true') {
+          console.log('✅ Active subscription found (cached)');
+          this.hasActiveSubscription = true;
+          return true;
+        }
+      }
+      
+      // Check localStorage fallback
+      const cachedStatus = localStorage.getItem('diaBlockSubscriptionActive');
+      if (cachedStatus === 'true') {
+        console.log('✅ Subscription status restored from cache');
+        this.hasActiveSubscription = true;
+        return true;
+      }
+      
+      console.log('ℹ️ No active subscription found');
+      this.hasActiveSubscription = false;
+      return false;
+    } catch (error) {
+      console.error('❌ Error checking subscription status:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Restore purchases (for users who reinstall or change devices)
    */
   async restorePurchases() {
     console.log('💰 BillingService: Restoring purchases...');
 
     try {
-      // Check if running on Android
-      if (typeof window !== 'undefined' && window.Capacitor && window.Capacitor.getPlatform() === 'android') {
-        // Uncomment when plugin is installed:
-        /*
-        const result = await InAppPurchase2.restorePurchases();
+      const platform = Capacitor.getPlatform();
+      
+      if (platform === 'android' || platform === 'ios') {
+        await NativePurchases.restorePurchases();
+        console.log('✅ Purchases restored');
         
-        if (result.purchases && result.purchases.length > 0) {
-          const noAdsPurchase = result.purchases.find(p => p.productId === this.productId);
-          if (noAdsPurchase) {
-            console.log('✅ Found previous "No Ads" purchase');
-            this.hasPurchasedNoAds = true;
-            localStorage.setItem('diaBlockNoAdsPurchased', 'true');
-            return true;
-          }
-        }
-        */
-
-        // For now, check localStorage
-        const purchased = localStorage.getItem('diaBlockNoAdsPurchased');
-        if (purchased === 'true') {
-          console.log('✅ Restored from localStorage');
-          this.hasPurchasedNoAds = true;
-          return true;
-        }
+        // Re-check subscription status
+        const hasSubscription = await this.checkSubscriptionStatus();
+        return hasSubscription;
+      }
+      
+      // Web fallback - check localStorage
+      const cachedStatus = localStorage.getItem('diaBlockSubscriptionActive');
+      if (cachedStatus === 'true') {
+        console.log('✅ Restored from localStorage');
+        this.hasActiveSubscription = true;
+        return true;
       }
       
       return false;
@@ -147,62 +249,93 @@ class BillingService {
   }
 
   /**
-   * Check if user has purchased "No Ads"
+   * Open subscription management (Google Play/App Store)
    */
-  hasNoAdsPurchase() {
-    return this.hasPurchasedNoAds;
-  }
+  async manageSubscriptions() {
+    console.log('💰 BillingService: Opening subscription management...');
 
-  /**
-   * Get product details
-   */
-  async getProductDetails() {
-    // Uncomment when plugin is installed:
-    /*
     try {
-      const result = await InAppPurchase2.getProducts({
-        productIds: [this.productId]
-      });
+      const platform = Capacitor.getPlatform();
       
-      if (result.products && result.products.length > 0) {
-        return result.products[0];
+      if (platform === 'android' || platform === 'ios') {
+        await NativePurchases.manageSubscriptions();
+        console.log('✅ Opened subscription management');
+        return true;
+      } else {
+        // Web - open Google Play subscriptions page
+        window.open('https://play.google.com/store/account/subscriptions', '_blank');
+        return true;
       }
     } catch (error) {
-      console.error('Error getting product details:', error);
+      console.error('❌ Error opening subscription management:', error);
+      return false;
     }
-    */
-
-    // Mock product details
-    return {
-      id: this.productId,
-      title: 'No Ads',
-      description: 'Remove all advertisements from the game',
-      price: '$2.99',
-      currency: 'USD'
-    };
   }
 
   /**
-   * DEBUG: Reset purchase status (for testing)
+   * Check if user has active "No Ads" subscription
    */
-  resetPurchase() {
-    console.log('🔧 DEBUG: Resetting "No Ads" purchase status');
-    this.hasPurchasedNoAds = false;
+  hasNoAdsSubscription() {
+    return this.hasActiveSubscription;
+  }
+
+  /**
+   * Alias for backwards compatibility
+   */
+  hasNoAdsPurchase() {
+    return this.hasActiveSubscription;
+  }
+
+  /**
+   * Get current price string
+   */
+  getPriceString() {
+    return this.priceString;
+  }
+
+  // ==================== DEBUG METHODS ====================
+
+  /**
+   * DEBUG: Reset subscription status (for testing)
+   */
+  resetSubscription() {
+    console.log('🔧 DEBUG: Resetting subscription status');
+    this.hasActiveSubscription = false;
+    localStorage.removeItem('diaBlockSubscriptionActive');
+    localStorage.removeItem('diaBlockLastTransactionId');
+    // Also remove old key for backwards compatibility
     localStorage.removeItem('diaBlockNoAdsPurchased');
-    console.log('✅ Purchase status reset. Ads should now show.');
+    console.log('✅ Subscription status reset. Ads should now show.');
     return true;
   }
 
   /**
-   * DEBUG: Get purchase status
+   * DEBUG: Get subscription status
    */
   getStatus() {
-    const stored = localStorage.getItem('diaBlockNoAdsPurchased');
+    const cachedStatus = localStorage.getItem('diaBlockSubscriptionActive');
+    const lastTransactionId = localStorage.getItem('diaBlockLastTransactionId');
     return {
-      hasPurchasedNoAds: this.hasPurchasedNoAds,
-      localStorageValue: stored,
-      adsEnabled: !this.hasPurchasedNoAds
+      hasActiveSubscription: this.hasActiveSubscription,
+      cachedStatus: cachedStatus,
+      lastTransactionId: lastTransactionId,
+      productId: this.productId,
+      planId: this.planId,
+      priceString: this.priceString,
+      adsEnabled: !this.hasActiveSubscription,
+      isInitialized: this.isInitialized
     };
+  }
+
+  /**
+   * DEBUG: Simulate subscription (for web testing)
+   */
+  simulateSubscription() {
+    console.log('🔧 DEBUG: Simulating active subscription');
+    this.hasActiveSubscription = true;
+    localStorage.setItem('diaBlockSubscriptionActive', 'true');
+    console.log('✅ Subscription simulated. Ads should be hidden.');
+    return true;
   }
 }
 
